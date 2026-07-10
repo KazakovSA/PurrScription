@@ -62,8 +62,16 @@ async def import_gecko_segments(
     return created
 
 
+def _demo_gecko_candidates() -> list[Path]:
+    base = Path(__file__).resolve()
+    return [
+        base.parents[2] / "demo" / "gecko-json" / "demo-interview-001.json",
+        base.parents[5] / "demo" / "gecko-json" / "demo-interview-001.json",
+    ]
+
+
 def load_demo_gecko() -> dict[str, Any]:
-    demo_path = Path(__file__).resolve().parents[5] / "demo" / "gecko-json" / "demo-interview-001.json"
-    if demo_path.exists():
-        return json.loads(demo_path.read_text(encoding="utf-8"))
+    for demo_path in _demo_gecko_candidates():
+        if demo_path.exists():
+            return json.loads(demo_path.read_text(encoding="utf-8"))
     return {"segments": []}
