@@ -64,10 +64,12 @@ async def import_gecko_segments(
 
 def _demo_gecko_candidates() -> list[Path]:
     base = Path(__file__).resolve()
-    return [
-        base.parents[2] / "demo" / "gecko-json" / "demo-interview-001.json",
-        base.parents[5] / "demo" / "gecko-json" / "demo-interview-001.json",
-    ]
+    rel = Path("demo") / "gecko-json" / "demo-interview-001.json"
+    candidates: list[Path] = []
+    for depth in (2, 5):
+        if depth < len(base.parents):
+            candidates.append(base.parents[depth] / rel)
+    return candidates
 
 
 def load_demo_gecko() -> dict[str, Any]:
