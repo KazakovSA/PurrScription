@@ -1,0 +1,7 @@
+import{create}from'zustand';import type{AuthSession,PresenceMember,User}from'./types';
+const KEY='purrscription.session';
+function restore():AuthSession|null{try{const raw=sessionStorage.getItem(KEY);return raw?JSON.parse(raw)as AuthSession:null}catch{return null}}
+interface State{session:AuthSession|null;user:User|null;activeSegmentId:string|null;connection:'connecting'|'online'|'offline';presence:PresenceMember[];setSession:(v:AuthSession)=>void;clearSession:()=>void;selectSegment:(id:string|null)=>void;setConnection:(v:State['connection'])=>void;upsertPresence:(v:PresenceMember)=>void;removePresence:(id:string)=>void;clearPresence:()=>void}
+const initial=restore();
+export const useAppStore=create<State>(set=>({session:initial,user:initial?.user??null,activeSegmentId:null,connection:'offline',presence:[],setSession:session=>{sessionStorage.setItem(KEY,JSON.stringify(session));set({session,user:session.user})},clearSession:()=>{sessionStorage.removeItem(KEY);set({session:null,user:null,presence:[],connection:'offline'})},selectSegment:activeSegmentId=>set({activeSegmentId}),setConnection:connection=>set({connection}),upsertPresence:v=>set(s=>({presence:[...s.presence.filter(p=>p.userId!==v.userId),v]})),removePresence:id=>set(s=>({presence:s.presence.filter(p=>p.userId!==id)})),clearPresence:()=>set({presence:[]})}));
+export const getAccessToken=()=>useAppStore.getState().session?.accessToken??null;
