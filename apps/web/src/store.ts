@@ -1,6 +1,0 @@
-import { create } from 'zustand';
-import { initialMarkers, initialSegments } from './data';
-import type { DemoUser, Marker, Segment } from './types';
-interface AppState { user: DemoUser | null; segments: Segment[]; markers: Marker[]; activeId: string; currentTime: number; playing: boolean; segmentMode: boolean; speed: number; login:(u:DemoUser)=>void; logout:()=>void; select:(id:string)=>void; updateSegment:(s:Segment)=>void; setPlaying:(v:boolean)=>void; setTime:(v:number)=>void; setSegmentMode:(v:boolean)=>void; setSpeed:(v:number)=>void }
-const saved = typeof localStorage === 'undefined' ? null : localStorage.getItem('purrscription-segments');
-export const useAppStore = create<AppState>((set) => ({ user:null, segments:saved ? JSON.parse(saved) as Segment[] : initialSegments, markers:initialMarkers, activeId:'seg-002', currentTime:5.5, playing:false, segmentMode:false, speed:1, login:(user)=>set({user}), logout:()=>set({user:null}), select:(activeId)=>set({activeId}), updateSegment:(segment)=>set((state)=>{const segments=state.segments.map((item)=>item.id===segment.id?segment:item); localStorage.setItem('purrscription-segments',JSON.stringify(segments));return{segments}}), setPlaying:(playing)=>set({playing}), setTime:(currentTime)=>set({currentTime}), setSegmentMode:(segmentMode)=>set({segmentMode}), setSpeed:(speed)=>set({speed}) }));
