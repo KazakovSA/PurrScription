@@ -1,0 +1,42 @@
+{
+  "name": "purrscription",
+  "version": "0.1.0",
+  "description": "Collaborative audio/video annotation platform",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "packages/contracts"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "npm run dev -w apps/api",
+    "build": "npm run build --workspaces",
+    "build:web": "npm run build -w apps/web",
+    "build:api": "npm run build -w apps/api",
+    "build:contracts": "npm run build -w packages/contracts",
+    "lint": "npm run lint --workspaces",
+    "type-check": "npm run type-check --workspaces",
+    "test": "npm run test --workspaces",
+    "test:contracts": "npm run test -w packages/contracts",
+    "test:web": "npm run test -w apps/web",
+    "test:api": "npm run test -w apps/api",
+    "test:e2e": "npm run test -w tests/e2e",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "prepare": "husky install 2>/dev/null || true"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.3.0",
+    "@commitlint/config-conventional": "^19.2.2",
+    "husky": "^9.1.4",
+    "lerna": "^8.1.7"
+  }
+}

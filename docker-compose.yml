@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: purrscription_postgres
+    environment:
+      POSTGRES_DB: purrscription
+      POSTGRES_USER: purrscription
+      POSTGRES_PASSWORD: purrscription
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U purrscription -d purrscription"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - purrscription
+
+  redis:
+    image: redis:7-alpine
+    container_name: purrscription_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    networks:
+      - purrscription
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.api
+    container_name: purrscription_api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://purrscription:purrscription@postgres:5432/purrscription
+      REDIS_URL: redis://redis:6379
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+      SECRET_KEY: dev-secret-change-in-production
+      WHISPER_MODEL: base
+      WHISPER_DEVICE: cpu
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./apps/api:/app/api
+      - ./packages/contracts:/app/contracts
+    command: >
+      sh -c "cd /app && 
+             pip install -e . &&
+             alembic upgrade head &&
+             python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - purrscription
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.web
+    container_name: purrscription_web
+    environment:
+      VITE_API_URL: http://api:8000
+      VITE_WS_URL: ws://api:8000/ws
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./apps/web:/app/web
+      - ./packages/contracts:/app/contracts
+      - /app/web/node_modules
+    command: npm run dev -w apps/web
+    networks:
+      - purrscription
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  purrscription:
+    driver: bridge

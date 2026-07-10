@@ -1,0 +1,28 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY ./package.json ./package-lock.json* ./
+COPY ./packages ./packages
+COPY ./apps/web ./apps/web
+COPY ./apps/web/.npmrc* ./apps/web/
+
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Build frontend
+RUN npm run build -w apps/web
+
+# Use nginx for production or node for dev
+FROM node:18-alpine as dev
+WORKDIR /app
+COPY --from=0 /app /app
+EXPOSE 5173
+CMD ["npm", "run", "dev", "-w", "apps/web"]
+
+FROM nginx:alpine as prod
+COPY --from=0 /app/apps/web/dist /usr/share/nginx/html
+COPY ./infra/nginx.conf /etc/nginx/nginx.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
