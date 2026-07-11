@@ -42,9 +42,10 @@ dev = [
 
 [project.scripts]
 purrscription-seed = "api.seed:main"
+purrscription-cleanup = "api.maintenance:main"
 
-[tool.setuptools]
-packages = ["api"]
+[tool.setuptools.packages.find]
+include = ["api*"]
 
 [tool.setuptools.package-data]
 api = ["py.typed"]
@@ -71,10 +72,12 @@ ignore_missing_imports = true
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-select = ["E", "F", "W", "I"]
 exclude = [".venv", "venv", "migrations"]
 
-[tool.ruff.isort]
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
 known-third-party = ["fastapi", "sqlalchemy", "pydantic"]
 
 [tool.black]

@@ -3,7 +3,7 @@ from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import Depends
+from fastapi import Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -88,3 +88,29 @@ async def get_optional_user(
         return await get_current_user(credentials, db)
     except APIError:
         return None
+
+
+async def _user_from_access_token(token: str, db: AsyncSession) -> User:
+    payload = decode_token(token)
+    if payload.get("type") != "access":
+        raise APIError(401, "AUTHENTICATION_ERROR", "Invalid token type")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise APIError(401, "AUTHENTICATION_ERROR", "Invalid token subject")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise APIError(401, "AUTHENTICATION_ERROR", "User not found")
+    return user
+
+
+async def get_current_user_flexible(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    access_token: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if credentials is not None:
+        return await get_current_user(credentials, db)
+    if access_token:
+        return await _user_from_access_token(access_token, db)
+    raise APIError(401, "AUTHENTICATION_ERROR", "Missing authorization token")

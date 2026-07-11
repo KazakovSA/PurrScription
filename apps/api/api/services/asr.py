@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,9 @@ async def start_asr_run(
     settings = get_settings()
     existing = (
         await db.execute(
-            select(ASRRun).where(ASRRun.task_id == task_id, ASRRun.status == ASRStatus.COMPLETED.value)
+            select(ASRRun).where(
+                ASRRun.task_id == task_id, ASRRun.status == ASRStatus.COMPLETED.value
+            )
         )
     ).scalar_one_or_none()
     if existing:
@@ -73,8 +76,8 @@ async def start_asr_run(
     run.completed_at = datetime.now(UTC)
 
     existing_segments = (
-        await db.execute(select(Segment).where(Segment.task_id == task_id))
-    ).scalars().all()
+        (await db.execute(select(Segment).where(Segment.task_id == task_id))).scalars().all()
+    )
     if not existing_segments:
         for item in raw:
             segment = Segment(
@@ -94,20 +97,55 @@ async def start_asr_run(
 
 
 def gecko_export(task_id: str, segments: list[Segment], media_name: str) -> dict[str, Any]:
+    monologues = []
+    for segment in segments:
+        if segment.word_timings:
+            terms = segment.word_timings
+            monologues.append(
+                {
+                    "speaker": {"id": segment.speaker or "UNKNOWN"},
+                    "start": segment.start_seconds,
+                    "end": segment.end_seconds,
+                    "text": segment.text,
+                    "terms": terms,
+                }
+            )
+            continue
+        tokens = re.findall(r"[\w]+(?:[-'][\w]+)*|[^\w\s]", segment.text, flags=re.UNICODE)
+        words = [token for token in tokens if re.search(r"\w", token, flags=re.UNICODE)]
+        word_duration = (segment.end_seconds - segment.start_seconds) / max(1, len(words))
+        word_index = 0
+        terms = []
+        for token in tokens:
+            punctuation = not bool(re.search(r"\w", token, flags=re.UNICODE))
+            start = segment.start_seconds + word_index * word_duration
+            end = start if punctuation else start + word_duration
+            terms.append(
+                {
+                    "text": token,
+                    "type": "PUNCTUATION" if punctuation else "WORD",
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "confidence": segment.confidence,
+                }
+            )
+            if not punctuation:
+                word_index += 1
+        monologues.append(
+            {
+                "speaker": {"id": segment.speaker or "UNKNOWN"},
+                "start": segment.start_seconds,
+                "end": segment.end_seconds,
+                "text": segment.text,
+                "terms": terms,
+            }
+        )
     return {
+        "schemaVersion": "2.0",
         "format": "gecko",
         "taskId": task_id,
-        "media": media_name,
-        "segments": [
-            {
-                "start": seg.start_seconds,
-                "end": seg.end_seconds,
-                "text": seg.text,
-                "speaker": seg.speaker,
-                "confidence": seg.confidence,
-            }
-            for seg in segments
-        ],
+        "media": {"name": media_name},
+        "monologues": monologues,
     }
 
 
@@ -115,7 +153,7 @@ def write_export_file(task_id: str, payload: dict[str, Any], fmt: str) -> tuple[
     settings = get_settings()
     export_dir = Path(settings.export_storage_path)
     export_dir.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(payload, ensure_ascii=False, indent=2)
+    content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
     checksum = hashlib.sha256(content.encode()).hexdigest()
     path = export_dir / f"{task_id}-{checksum[:8]}.{fmt}"
     path.write_text(content, encoding="utf-8")

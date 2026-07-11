@@ -105,8 +105,11 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255))
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(50), index=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class Project(Base):
@@ -117,15 +120,21 @@ class Project(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class ProjectMember(Base):
     __tablename__ = "project_member"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
     role: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -136,7 +145,9 @@ class MediaFile(Base):
     __tablename__ = "media_file"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(100))
     duration: Mapped[float] = mapped_column(Float)
@@ -153,14 +164,20 @@ class Task(Base):
     __tablename__ = "task"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(50), default=TaskStatus.NEW.value, index=True)
     media_file_id: Mapped[str] = mapped_column(String(36), ForeignKey("media_file.id"), index=True)
-    assigned_to: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True, index=True)
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user.id"), nullable=True, index=True
+    )
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -168,25 +185,36 @@ class TaskAssignment(Base):
     __tablename__ = "task_assignment"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
     assigned_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"))
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    start_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    end_seconds: Mapped[float | None] = mapped_column(nullable=True)
 
 
 class Segment(Base):
     __tablename__ = "segment"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     start_seconds: Mapped[float] = mapped_column(Float)
     end_seconds: Mapped[float] = mapped_column(Float)
     text: Mapped[str] = mapped_column(Text, default="")
     speaker: Mapped[str | None] = mapped_column(String(100), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    word_timings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default=SegmentStatus.PENDING.value)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
     updated_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"))
 
 
@@ -194,7 +222,9 @@ class SegmentRevision(Base):
     __tablename__ = "segment_revision"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    segment_id: Mapped[str] = mapped_column(String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True)
+    segment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer)
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
     speaker: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -204,14 +234,18 @@ class SegmentRevision(Base):
     changed_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    __table_args__ = (UniqueConstraint("segment_id", "version", name="uq_segment_revision_version"),)
+    __table_args__ = (
+        UniqueConstraint("segment_id", "version", name="uq_segment_revision_version"),
+    )
 
 
 class SegmentLock(Base):
     __tablename__ = "segment_lock"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    segment_id: Mapped[str] = mapped_column(String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True)
+    segment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True
+    )
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id", ondelete="CASCADE"))
     lock_type: Mapped[str] = mapped_column(String(50))
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -224,15 +258,21 @@ class Marker(Base):
     __tablename__ = "marker"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    segment_id: Mapped[str] = mapped_column(String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True)
+    segment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True
+    )
     type: Mapped[str] = mapped_column(String(100))
     severity: Mapped[str] = mapped_column(String(50), index=True)
     status: Mapped[str] = mapped_column(String(50), default=MarkerStatus.OPEN.value, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    assignee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    assignee_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user.id"), nullable=True
+    )
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    resolved_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user.id"), nullable=True
+    )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -241,22 +281,37 @@ class Comment(Base):
     __tablename__ = "comment"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    segment_id: Mapped[str] = mapped_column(String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True)
-    parent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("comment.id"), nullable=True)
+    segment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("segment.id", ondelete="CASCADE"), index=True
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("comment.id"), nullable=True
+    )
     text: Mapped[str] = mapped_column(Text)
     author: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), index=True)
-    assignee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    assignee_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    time_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    time_end_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    color: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class Mention(Base):
     __tablename__ = "mention"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    comment_id: Mapped[str] = mapped_column(String(36), ForeignKey("comment.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    comment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("comment.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -264,10 +319,18 @@ class PresenceSession(Base):
     __tablename__ = "presence_session"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
-    focused_segment_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("segment.id"), nullable=True)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
+    focused_segment_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("segment.id"), nullable=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
     status: Mapped[str] = mapped_column(String(50), default="active")
 
     __table_args__ = (UniqueConstraint("user_id", "task_id", name="uq_presence_user_task"),)
@@ -277,7 +340,9 @@ class TranscriptVersion(Base):
     __tablename__ = "transcript_version"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     version: Mapped[int] = mapped_column(Integer)
     segments: Mapped[dict] = mapped_column(JSON)
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"))
@@ -290,7 +355,9 @@ class Term(Base):
     __tablename__ = "term"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project.id", ondelete="CASCADE"), index=True
+    )
     text: Mapped[str] = mapped_column(String(255))
     translation: Mapped[str | None] = mapped_column(Text, nullable=True)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -305,11 +372,15 @@ class ChecklistItem(Base):
     __tablename__ = "checklist_item"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     description: Mapped[str] = mapped_column(Text)
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     completed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    completed_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("user.id"), nullable=True)
+    completed_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user.id"), nullable=True
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -317,7 +388,9 @@ class QualityCheck(Base):
     __tablename__ = "quality_check"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     check_type: Mapped[str] = mapped_column(String(100))
     severity: Mapped[str] = mapped_column(String(50))
     message: Mapped[str] = mapped_column(Text)
@@ -330,7 +403,9 @@ class VerificationResult(Base):
     __tablename__ = "verification_result"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     verified_by: Mapped[str] = mapped_column(String(36), ForeignKey("user.id"), index=True)
     result: Mapped[str] = mapped_column(String(50))
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -341,7 +416,9 @@ class ASRRun(Base):
     __tablename__ = "asr_run"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     model: Mapped[str] = mapped_column(String(100))
     version: Mapped[str] = mapped_column(String(50))
     device: Mapped[str] = mapped_column(String(50))
@@ -356,7 +433,9 @@ class ExportFile(Base):
     __tablename__ = "export_file"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
     format: Mapped[str] = mapped_column(String(50))
     storage_key: Mapped[str] = mapped_column(String(512), unique=True)
     file_size: Mapped[int] = mapped_column(BigInteger)

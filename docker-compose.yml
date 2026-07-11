@@ -44,7 +44,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://purrscription:purrscription@postgres:5432/purrscription
       REDIS_URL: redis://redis:6379
       ENVIRONMENT: development
-      DEBUG: "true"
+      PURRSCRIPTION_DEBUG: "true"
       LOG_LEVEL: INFO
       SECRET_KEY: dev-secret-change-in-production
       WHISPER_MODEL: base

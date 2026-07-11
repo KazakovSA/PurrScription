@@ -150,14 +150,15 @@ jobs:
       
       - name: Run migrations
         env:
-          DATABASE_URL: postgresql://purrscription:purrscription@localhost:5432/purrscription_test
+          DATABASE_URL: postgresql+asyncpg://purrscription:purrscription@localhost:5432/purrscription_test
         run: |
           cd apps/api
           alembic upgrade head
       
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://purrscription:purrscription@localhost:5432/purrscription_test
+          DATABASE_URL: postgresql+asyncpg://purrscription:purrscription@localhost:5432/purrscription_test
+          TEST_DATABASE_URL: postgresql+asyncpg://purrscription:purrscription@localhost:5432/purrscription_test
           REDIS_URL: redis://localhost:6379
           ENVIRONMENT: testing
         run: |
@@ -201,6 +202,20 @@ jobs:
         run: |
           cd apps/api
           pip install -e .
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+        working-directory: apps/web
+      - run: npm run test:e2e
+        working-directory: apps/web
 
   commit-lint:
     runs-on: ubuntu-latest

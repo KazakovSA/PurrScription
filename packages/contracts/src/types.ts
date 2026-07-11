@@ -4,7 +4,7 @@ import {
   SegmentStatus,
   QualitySeverity,
   MarkerStatus,
-  VerificationResult,
+  VerificationOutcome,
   Speaker,
 } from './enums.js';
 
@@ -230,7 +230,7 @@ export interface VerificationResult {
   id: string;
   taskId: string;
   verifiedBy: string;
-  result: VerificationResult;
+  result: VerificationOutcome;
   comment?: string;
   verifiedAt: string;
 }

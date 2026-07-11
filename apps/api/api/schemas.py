@@ -42,6 +42,7 @@ class UserOut(APIModel):
     email: str
     name: str
     role: str
+    avatar_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -56,6 +57,51 @@ class RegisterRequest(APIModel):
 class LoginRequest(APIModel):
     email: EmailStr
     password: str
+
+
+class AvatarUpdate(APIModel):
+    avatar_url: str = Field(max_length=3_000_000)
+
+
+class ProfileUpdate(APIModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class UserSummary(APIModel):
+    id: str
+    name: str
+    role: str
+    avatar_url: str | None = None
+
+
+class RoleUpdate(APIModel):
+    role: str
+
+
+class TermCreate(APIModel):
+    project_id: str
+    text: str = Field(min_length=1, max_length=255)
+    translation: str | None = None
+    context: str | None = None
+    status: str = "new"
+
+
+class TermUpdate(APIModel):
+    text: str | None = Field(default=None, min_length=1, max_length=255)
+    translation: str | None = None
+    context: str | None = None
+    status: str | None = None
+
+
+class TermOut(APIModel):
+    id: str
+    project_id: str
+    text: str
+    translation: str | None
+    context: str | None
+    status: str
+    created_by: str
+    created_at: datetime
 
 
 class TokenResponse(APIModel):
@@ -139,6 +185,11 @@ class SegmentUpdate(APIModel):
     version: int
 
 
+class SegmentSplit(APIModel):
+    at: float
+    version: int
+
+
 class SegmentOut(APIModel):
     id: str
     task_id: str
@@ -147,6 +198,7 @@ class SegmentOut(APIModel):
     text: str
     speaker: str | None
     confidence: float
+    word_timings: list[dict] | None = None
     status: str
     version: int
     updated_at: datetime
@@ -194,16 +246,51 @@ class MarkerOut(APIModel):
 class CommentCreate(APIModel):
     segment_id: str
     text: str
+    time_seconds: float | None = None
+    time_end_seconds: float | None = None
+    color: str | None = None
 
 
 class CommentOut(APIModel):
     id: str
     segment_id: str
     text: str
-    author: str
+    author: UserSummary
     created_at: datetime
     updated_at: datetime
     resolved: bool
+    time_seconds: float | None = None
+    time_end_seconds: float | None = None
+    color: str | None = None
+
+
+class TaskAssignmentCreate(APIModel):
+    user_id: str
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+
+
+class TaskAssignmentOut(APIModel):
+    id: str
+    task_id: str
+    user_id: str
+    user_name: str
+    user_role: str
+    assigned_by: str
+    assigned_at: datetime
+    start_seconds: float | None = None
+    end_seconds: float | None = None
+
+
+class CapabilitiesOut(APIModel):
+    manage_users: bool
+    manage_projects: bool
+    assign_tasks: bool
+    export: bool
+    run_asr: bool
+    verify_tasks: bool
+    edit_terms: bool
+    view_analytics: bool
 
 
 class VerifyRequest(APIModel):

@@ -1,21 +1,25 @@
 import logging
+import traceback
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from api.config import get_settings
 from api.database import init_db
 from api.events import event_bus
-from api.exceptions import APIError, api_error_handler, http_exception_handler
+from api.exceptions import APIError, api_error_handler, error_response, http_exception_handler
+from api.observability import ObservabilityMiddleware, prometheus_metrics
 from api.routers import (
     auth,
     markers_comments,
     projects_tasks,
     quality_export,
     segments_media,
+    terms,
     websocket,
 )
 from api.schemas import HealthOut, SuccessResponse
@@ -46,15 +50,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ObservabilityMiddleware)
 
 app.add_exception_handler(APIError, api_error_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 
+
+async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled API error")
+    message = str(exc) or exc.__class__.__name__
+    if settings.debug:
+        message = f"{message}\n{traceback.format_exc()[-400:]}"
+    return error_response(500, "INTERNAL_SERVER_ERROR", message)
+
+
+app.add_exception_handler(Exception, unhandled_exception_handler)
+
 app.include_router(auth.router)
+app.include_router(auth.assets_router)
 app.include_router(projects_tasks.router)
 app.include_router(segments_media.router)
 app.include_router(markers_comments.router)
 app.include_router(quality_export.router)
+app.include_router(terms.router)
 app.include_router(websocket.router)
 
 
@@ -80,3 +98,8 @@ async def health() -> SuccessResponse:
 @app.get("/ready")
 async def ready() -> SuccessResponse:
     return await health()
+
+
+@app.get("/metrics", response_class=PlainTextResponse, include_in_schema=False)
+async def metrics() -> str:
+    return prometheus_metrics()

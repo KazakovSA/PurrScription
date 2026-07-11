@@ -47,7 +47,12 @@ async def seed() -> None:
 
         users: dict[str, User] = {}
         for email, name, role in DEMO_USERS:
-            user = User(email=email, name=name, role=role, password_hash=hash_password(settings.demo_user_password))
+            user = User(
+                email=email,
+                name=name,
+                role=role,
+                password_hash=hash_password(settings.demo_user_password),
+            )
             db.add(user)
             users[role] = user
         await db.flush()
@@ -68,7 +73,11 @@ async def seed() -> None:
             db.add(ProjectMember(project_id=project.id, user_id=user.id, role=user.role))
 
         for text in TERM_SEEDS:
-            status = TermStatus.APPROVED.value if text in {"TATLIN", "VEGMAN"} else TermStatus.REVIEW.value
+            status = (
+                TermStatus.APPROVED.value
+                if text in {"TATLIN", "VEGMAN"}
+                else TermStatus.REVIEW.value
+            )
             db.add(
                 Term(
                     project_id=project.id,
@@ -116,12 +125,34 @@ async def seed() -> None:
         db.add_all([task_work, task_accepted])
         await db.flush()
 
-        segments_data = parsed[:12] if parsed else [
-            {"start": 0.0, "end": 4.0, "text": "TATLIN unified storage", "speaker": "TATLIN", "confidence": 0.91},
-            {"start": 3.5, "end": 8.0, "text": "VEGMAN backup flex", "speaker": "VEGMAN", "confidence": 0.42},
-            {"start": 8.0, "end": 12.0, "text": "archive configuration", "speaker": "TATLIN", "confidence": 0.88},
-            {"start": 12.0, "end": 15.0, "text": "", "speaker": "TATLIN", "confidence": 0.2},
-        ]
+        segments_data = (
+            parsed[:12]
+            if parsed
+            else [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "TATLIN unified storage",
+                    "speaker": "TATLIN",
+                    "confidence": 0.91,
+                },
+                {
+                    "start": 3.5,
+                    "end": 8.0,
+                    "text": "VEGMAN backup flex",
+                    "speaker": "VEGMAN",
+                    "confidence": 0.42,
+                },
+                {
+                    "start": 8.0,
+                    "end": 12.0,
+                    "text": "archive configuration",
+                    "speaker": "TATLIN",
+                    "confidence": 0.88,
+                },
+                {"start": 12.0, "end": 15.0, "text": "", "speaker": "TATLIN", "confidence": 0.2},
+            ]
+        )
         created_segments: list[Segment] = []
         for item in segments_data:
             segment = Segment(

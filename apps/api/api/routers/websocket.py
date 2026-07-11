@@ -99,11 +99,24 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
 
     event_bus.subscribe_local(task_id, websocket)
     await _upsert_presence(user.id, task_id)
+    await websocket.send_json(
+        {
+            "type": "presence_updated",
+            "taskId": task_id,
+            "userId": user.id,
+            "data": {"presence": await _presence_snapshot(task_id)},
+        }
+    )
     await event_bus.publish(
         event_type="user_joined",
         task_id=task_id,
         user_id=user.id,
-        data={"userId": user.id, "userName": user.name, "role": user.role},
+        data={
+            "userId": user.id,
+            "userName": user.name,
+            "role": user.role,
+            "avatarUrl": user.avatar_url,
+        },
     )
     try:
         while True:
@@ -111,6 +124,21 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
             message = json.loads(raw)
             if message.get("action") == "heartbeat":
                 await _upsert_presence(user.id, task_id)
+            elif message.get("action") == "focus":
+                segment_id = message.get("segmentId")
+                await _upsert_presence(user.id, task_id, segment_id)
+                await event_bus.publish(
+                    event_type="segment_focused",
+                    task_id=task_id,
+                    user_id=user.id,
+                    data={
+                        "userId": user.id,
+                        "userName": user.name,
+                        "role": user.role,
+                        "segmentId": segment_id,
+                        "avatarUrl": user.avatar_url,
+                    },
+                )
     except WebSocketDisconnect:
         pass
     finally:
@@ -124,7 +152,7 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
         )
 
 
-async def _upsert_presence(user_id: str, task_id: str) -> None:
+async def _upsert_presence(user_id: str, task_id: str, segment_id: str | None = None) -> None:
     async with async_session_factory() as db:
         result = await db.execute(
             select(PresenceSession).where(
@@ -136,8 +164,14 @@ async def _upsert_presence(user_id: str, task_id: str) -> None:
         if presence:
             presence.last_seen_at = datetime.now(UTC)
             presence.status = "active"
+            if segment_id is not None:
+                presence.focused_segment_id = segment_id
         else:
-            db.add(PresenceSession(user_id=user_id, task_id=task_id, status="active"))
+            db.add(
+                PresenceSession(
+                    user_id=user_id, task_id=task_id, status="active", focused_segment_id=segment_id
+                )
+            )
         await db.commit()
 
 
@@ -153,3 +187,24 @@ async def _remove_presence(user_id: str, task_id: str) -> None:
         if presence:
             await db.delete(presence)
             await db.commit()
+
+
+async def _presence_snapshot(task_id: str) -> list[dict[str, str | None]]:
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(PresenceSession, User)
+                .join(User, User.id == PresenceSession.user_id)
+                .where(PresenceSession.task_id == task_id)
+            )
+        ).all()
+        return [
+            {
+                "userId": member.id,
+                "userName": member.name,
+                "role": member.role,
+                "avatarUrl": member.avatar_url,
+                "segmentId": presence.focused_segment_id,
+            }
+            for presence, member in rows
+        ]

@@ -1,5 +1,5 @@
-
 from fastapi import APIRouter, Depends
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +9,7 @@ from api.database import get_db
 from api.events import event_bus
 from api.exceptions import APIError
 from api.models import ASRRun, ExportFile, MediaFile, Segment, Task, TaskStatus, User
-from api.rbac import can_export, can_view_task
+from api.rbac import can_export, can_run_asr, can_view_task
 from api.schemas import (
     ASRRunOut,
     ExportOut,
@@ -48,19 +48,46 @@ async def quality_check(
     )
 
 
+@router.get("/exports/{export_id}")
+async def download_export(
+    export_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    export = (
+        await db.execute(select(ExportFile).where(ExportFile.id == export_id))
+    ).scalar_one_or_none()
+    if export is None:
+        raise APIError(404, "RESOURCE_NOT_FOUND", "Export not found")
+    task = (await db.execute(select(Task).where(Task.id == export.task_id))).scalar_one()
+    if not can_view_task(current_user, task):
+        raise APIError(403, "AUTHORIZATION_ERROR", "Access denied")
+    return FileResponse(
+        export.storage_key,
+        media_type="application/json",
+        filename=f"{task.name}-gecko.json",
+    )
+
+
 @router.post("/tasks/{task_id}/asr", status_code=202)
 async def run_asr(
     task_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
+    if not can_run_asr(current_user):
+        raise APIError(403, "AUTHORIZATION_ERROR", "Cannot run ASR")
     task = (await db.execute(select(Task).where(Task.id == task_id))).scalar_one_or_none()
     if task is None:
         raise APIError(404, "RESOURCE_NOT_FOUND", "Task not found")
-    media = (await db.execute(select(MediaFile).where(MediaFile.id == task.media_file_id))).scalar_one_or_none()
+    media = (
+        await db.execute(select(MediaFile).where(MediaFile.id == task.media_file_id))
+    ).scalar_one_or_none()
     if media is None:
         raise APIError(404, "RESOURCE_NOT_FOUND", "Media not found")
-    run = await start_asr_run(db, task_id=task.id, media_duration=media.duration, user_id=current_user.id)
+    run = await start_asr_run(
+        db, task_id=task.id, media_duration=media.duration, user_id=current_user.id
+    )
     return SuccessResponse(
         data=ASRRunOut(
             id=run.id,
@@ -83,7 +110,9 @@ async def get_asr_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    run = (await db.execute(select(ASRRun).where(ASRRun.id == run_id, ASRRun.task_id == task_id))).scalar_one_or_none()
+    run = (
+        await db.execute(select(ASRRun).where(ASRRun.id == run_id, ASRRun.task_id == task_id))
+    ).scalar_one_or_none()
     if run is None:
         raise APIError(404, "RESOURCE_NOT_FOUND", "ASR run not found")
     return SuccessResponse(
@@ -117,16 +146,14 @@ async def prepare_export(
     if task is None:
         raise APIError(404, "RESOURCE_NOT_FOUND", "Task not found")
     report = await run_quality_checks(db, task)
-    if not report["can_export"]:
-        raise APIError(422, "QUALITY_GATE_FAILED", "Export blocked by quality gate", {"blockers": report["blockers"]})
     segments = (await db.execute(select(Segment).where(Segment.task_id == task_id))).scalars().all()
     estimated = sum(len(s.text) for s in segments) * 4
     return SuccessResponse(
         data=ExportPrepareOut(
-            validation_passed=True,
-            blockers=[],
+            validation_passed=len(report["blockers"]) == 0,
+            blockers=report["blockers"],
             estimated_size=estimated,
-            ready_to_export=True,
+            ready_to_export=report["can_export"],
         )
     )
 
@@ -144,11 +171,26 @@ async def export_task(
     if task is None:
         raise APIError(404, "RESOURCE_NOT_FOUND", "Task not found")
     report = await run_quality_checks(db, task)
-    if not report["can_export"]:
-        raise APIError(422, "QUALITY_GATE_FAILED", "Export blocked by quality gate", {"blockers": report["blockers"]})
+    if not report["can_export"] and current_user.role != "admin":
+        raise APIError(
+            422,
+            "QUALITY_GATE_FAILED",
+            "Export blocked by quality gate",
+            details={"blockers": report["blockers"]},
+        )
 
-    media = (await db.execute(select(MediaFile).where(MediaFile.id == task.media_file_id))).scalar_one_or_none()
-    segments = (await db.execute(select(Segment).where(Segment.task_id == task_id).order_by(Segment.start_seconds))).scalars().all()
+    media = (
+        await db.execute(select(MediaFile).where(MediaFile.id == task.media_file_id))
+    ).scalar_one_or_none()
+    segments = (
+        (
+            await db.execute(
+                select(Segment).where(Segment.task_id == task_id).order_by(Segment.start_seconds)
+            )
+        )
+        .scalars()
+        .all()
+    )
     payload = gecko_export(task_id, segments, media.name if media else "media")
     path, size, checksum = write_export_file(task_id, payload, body.format)
 
@@ -159,14 +201,16 @@ async def export_task(
         file_size=size,
         checksum=checksum,
         exported_by=current_user.id,
-        quality_gate_passed=True,
+        quality_gate_passed=len(report["blockers"]) == 0,
     )
     db.add(export)
     old_status = task.status
     if task.status == TaskStatus.ACCEPTED.value:
         task.status = TaskStatus.EXPORTED.value
     await db.flush()
-    await write_audit(db, action="task_exported", entity_type="task", entity_id=task.id, user_id=current_user.id)
+    await write_audit(
+        db, action="task_exported", entity_type="task", entity_id=task.id, user_id=current_user.id
+    )
     await event_bus.publish(
         event_type="task_status_changed",
         task_id=task.id,

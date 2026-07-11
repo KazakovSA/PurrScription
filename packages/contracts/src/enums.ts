@@ -60,7 +60,7 @@ export const VERIFICATION_RESULTS = {
   REWORK: 'rework',
 } as const;
 
-export type VerificationResult = typeof VERIFICATION_RESULTS[keyof typeof VERIFICATION_RESULTS];
+export type VerificationOutcome = typeof VERIFICATION_RESULTS[keyof typeof VERIFICATION_RESULTS];
 
 // Speaker types
 export const SPEAKER_TYPES = {

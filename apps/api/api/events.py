@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -19,10 +20,20 @@ class EventBus:
         self._local_subscribers: dict[str, set[WebSocket]] = {}
 
     async def connect(self) -> None:
+        client: redis.Redis | None = None
         try:
-            self._redis = redis.from_url(settings.redis_url, decode_responses=True)
-            await self._redis.ping()
+            client = redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1.5,
+                socket_timeout=1.5,
+                retry_on_timeout=False,
+            )
+            await asyncio.wait_for(client.ping(), timeout=2.0)
+            self._redis = client
         except Exception:
+            if client is not None:
+                await client.aclose()
             logger.warning("Redis unavailable, using in-memory event bus only")
             self._redis = None
 

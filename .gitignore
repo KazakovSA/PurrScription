@@ -36,6 +36,10 @@ logs/
 .coverage
 htmlcov/
 .pytest_cache/
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/.playwright/
 
 # Docker
 docker-compose.override.yml
@@ -45,6 +49,12 @@ docker-compose.override.yml
 *.mp3
 *.m4a
 *.flac
+apps/api/storage/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
 
 # Dist
 apps/web/dist

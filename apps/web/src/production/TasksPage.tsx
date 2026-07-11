@@ -1,4 +1,314 @@
-import{useMutation,useQuery,useQueryClient}from'@tanstack/react-query';import{FileAudio,Filter,Search,Upload}from'lucide-react';import{useMemo,useState}from'react';import{useNavigate,useSearchParams}from'react-router-dom';import{api}from'./api';import{AppShell,PageHeader}from'./AppShell';import{useAppStore}from'./store';import type{Envelope,MediaFile,Paginated,Project,Task,TaskStatus}from'./types';import{EmptyState,ErrorState,Loading,Modal}from'./ui';
-const labels:Record<TaskStatus,string>={new:'Новая',assigned:'Назначена',in_progress:'В работе',review:'На проверке',rework:'Доработка',fixed:'Исправлена',accepted:'Принята',exported:'Экспортирована'};
-function ImportDialog({projects,initialProject,onClose}:{projects:Project[];initialProject:string;onClose:()=>void}){const qc=useQueryClient(),navigate=useNavigate(),[projectId,setProjectId]=useState(initialProject||projects[0]?.id||''),[name,setName]=useState(''),[audio,setAudio]=useState<File|null>(null),[gecko,setGecko]=useState<File|null>(null),mutation=useMutation({mutationFn:async()=>{if(!audio||!projectId)throw new Error('Выберите проект и аудиофайл');const mediaBody=new FormData();mediaBody.append('project_id',projectId);mediaBody.append('file',audio);const media=(await api<Envelope<MediaFile>>('/media/upload',{method:'POST',body:mediaBody})).data;if(gecko){const body=new FormData();body.append('project_id',projectId);body.append('media_file_id',media.id);body.append('gecko_json',gecko);return(await api<Envelope<{taskId:string}>>('/media/import-gecko',{method:'POST',body})).data.taskId}const task=(await api<Envelope<Task>>('/tasks',{method:'POST',body:JSON.stringify({projectId,name:name.trim()||audio.name,mediaFileId:media.id})})).data;return task.id},onSuccess:id=>{qc.invalidateQueries({queryKey:['tasks']});onClose();navigate(`/tasks/${id}/workspace`)}});return <Modal title="Загрузить запись" onClose={onClose}><form className="modal-form" onSubmit={e=>{e.preventDefault();mutation.mutate()}}><label>Проект<select value={projectId} onChange={e=>setProjectId(e.target.value)} required><option value="">Выберите проект</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Название задачи<input value={name} onChange={e=>setName(e.target.value)} placeholder="По умолчанию — имя файла"/></label><label>Аудио или видео<input type="file" accept="audio/*,video/mp4" required onChange={e=>setAudio(e.target.files?.[0]||null)}/><small>WAV, MP3, M4A или MP4</small></label><label>Gecko JSON <span className="optional">необязательно</span><input type="file" accept="application/json,.json" onChange={e=>setGecko(e.target.files?.[0]||null)}/><small>Если файл указан, сегменты импортируются вместе с задачей.</small></label>{mutation.error&&<div className="inline-error">{mutation.error.message}</div>}<footer><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" disabled={mutation.isPending||!audio||!projectId}>{mutation.isPending?'Загрузка…':'Загрузить и открыть'}</button></footer></form></Modal>}
-export function TasksPage(){const user=useAppStore(s=>s.user)!,navigate=useNavigate(),[params,setParams]=useSearchParams(),projectId=params.get('projectId')||'',[search,setSearch]=useState(''),[status,setStatus]=useState(''),[open,setOpen]=useState(false),projects=useQuery({queryKey:['projects'],queryFn:()=>api<Paginated<Project>>('/projects?limit=100')}),tasks=useQuery({queryKey:['tasks',projectId,status],queryFn:()=>api<Paginated<Task>>(`/tasks?limit=100${projectId?`&project_id=${encodeURIComponent(projectId)}`:''}${status?`&status=${status}`:''}`)}),canImport=['admin','supervisor'].includes(user.role),filtered=useMemo(()=>(tasks.data?.data||[]).filter(t=>t.name.toLowerCase().includes(search.toLowerCase())),[tasks.data,search]);return <AppShell><div className="page"><PageHeader eyebrow={projectId?projects.data?.data.find(p=>p.id===projectId)?.name:'Все проекты'} title="Задачи" description={`${tasks.data?.pagination.total??0} доступных задач`} action={canImport?<button className="button primary" onClick={()=>setOpen(true)}><Upload size={17}/>Загрузить запись</button>:<button className="button secondary" disabled title="Импорт доступен admin и supervisor"><Upload size={17}/>Загрузить запись</button>}/><div className="filterbar"><label><Filter size={15}/><select value={projectId} onChange={e=>{const next=new URLSearchParams(params);e.target.value?next.set('projectId',e.target.value):next.delete('projectId');setParams(next)}}><option value="">Все проекты</option>{projects.data?.data.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Все статусы</option>{Object.entries(labels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label className="search-control"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск задач"/></label></div>{tasks.isLoading?<Loading label="Загружаем задачи"/>:tasks.error?<ErrorState error={tasks.error} onRetry={()=>tasks.refetch()}/>:filtered.length===0?<EmptyState title="Задач не найдено" description={search||status?'Измените фильтры поиска.':'Загрузите медиа или импортируйте Gecko JSON.'}/>:<div className="task-list"><div className="task-list-head"><span>Запись</span><span>Статус</span><span>Назначение</span><span>Обновлено</span></div>{filtered.map(task=><button className="task-row" key={task.id} onClick={()=>navigate(`/tasks/${task.id}/workspace`)}><span><FileAudio size={18}/><span><b>{task.name}</b><small>{task.id.slice(0,8)}</small></span></span><span><i className={`status-mark status-${task.status}`}/>{labels[task.status]}</span><span>{task.assignedTo?task.assignedTo.slice(0,8):'Не назначена'}</span><time>{new Date(task.updatedAt).toLocaleDateString('ru-RU')}</time></button>)}</div>}{open&&<ImportDialog projects={projects.data?.data||[]} initialProject={projectId} onClose={()=>setOpen(false)}/>}</div></AppShell>}
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileAudio, Filter, Search, Upload } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { api } from "./api";
+import { AppShell, PageHeader } from "./AppShell";
+import { canImportMedia } from "./permissions";
+import { useAppStore } from "./store";
+import type {
+  Envelope,
+  MediaFile,
+  Paginated,
+  Project,
+  Task,
+  TaskStatus,
+} from "./types";
+import { EmptyState, ErrorState, Loading, Modal } from "./ui";
+const labels: Record<TaskStatus, string> = {
+  new: "Новая",
+  assigned: "Назначена",
+  in_progress: "В работе",
+  review: "На проверке",
+  rework: "Доработка",
+  fixed: "Исправлена",
+  accepted: "Принята",
+  exported: "Экспортирована",
+};
+function ImportDialog({
+  projects,
+  initialProject,
+  onClose,
+}: {
+  projects: Project[];
+  initialProject: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient(),
+    navigate = useNavigate(),
+    [projectId, setProjectId] = useState(
+      initialProject || projects[0]?.id || "",
+    ),
+    [name, setName] = useState(""),
+    [audio, setAudio] = useState<File | null>(null),
+    [gecko, setGecko] = useState<File | null>(null),
+    mutation = useMutation({
+      mutationFn: async () => {
+        if (!audio || !projectId)
+          throw new Error("Выберите проект и аудиофайл");
+        const mediaBody = new FormData();
+        mediaBody.append("project_id", projectId);
+        mediaBody.append("file", audio);
+        const media = (
+          await api<Envelope<MediaFile>>("/media/upload", {
+            method: "POST",
+            body: mediaBody,
+          })
+        ).data;
+        if (gecko) {
+          const body = new FormData();
+          body.append("project_id", projectId);
+          body.append("media_file_id", media.id);
+          body.append("gecko_json", gecko);
+          const imported = await api<
+            Envelope<{ taskId: string; segmentsCreated: number }>
+          >("/media/import-gecko", { method: "POST", body });
+          return imported.data.taskId;
+        }
+        const task = (
+          await api<Envelope<Task>>("/tasks", {
+            method: "POST",
+            body: JSON.stringify({
+              projectId,
+              name: name.trim() || audio.name,
+              mediaFileId: media.id,
+            }),
+          })
+        ).data;
+        return task.id;
+      },
+      onSuccess: (id) => {
+        qc.invalidateQueries({ queryKey: ["tasks"] });
+        onClose();
+        navigate(`/tasks/${id}/workspace`);
+      },
+    });
+  return (
+    <Modal title="Загрузить запись" onClose={onClose}>
+      <form
+        className="modal-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <label>
+          Проект
+          <select
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            required
+          >
+            <option value="">Выберите проект</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Название задачи
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="По умолчанию — имя файла"
+          />
+        </label>
+        <label>
+          Аудио или видео
+          <input
+            type="file"
+            accept="audio/*,video/mp4"
+            required
+            onChange={(e) => setAudio(e.target.files?.[0] || null)}
+          />
+          <small>WAV, MP3, M4A или MP4</small>
+        </label>
+        <label>
+          Gecko JSON <span className="optional">необязательно</span>
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => setGecko(e.target.files?.[0] || null)}
+          />
+          <small>
+            Поддерживаются экспорты Gecko 2.x (monologues), tiers и
+            PurrScription segments.
+          </small>
+        </label>
+        {mutation.error && (
+          <div className="inline-error">{mutation.error.message}</div>
+        )}
+        <footer>
+          <button type="button" className="button secondary" onClick={onClose}>
+            Отмена
+          </button>
+          <button
+            className="button primary"
+            disabled={mutation.isPending || !audio || !projectId}
+          >
+            {mutation.isPending ? "Загрузка…" : "Загрузить и открыть"}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  );
+}
+export function TasksPage() {
+  const user = useAppStore((s) => s.user)!,
+    navigate = useNavigate(),
+    [params, setParams] = useSearchParams(),
+    projectId = params.get("projectId") || "",
+    [search, setSearch] = useState(""),
+    [status, setStatus] = useState(""),
+    [open, setOpen] = useState(false),
+    projects = useQuery({
+      queryKey: ["projects"],
+      queryFn: () => api<Paginated<Project>>("/projects?limit=100"),
+    }),
+    tasks = useQuery({
+      queryKey: ["tasks", projectId, status],
+      queryFn: () =>
+        api<Paginated<Task>>(
+          `/tasks?limit=100${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${status ? `&status=${status}` : ""}`,
+        ),
+    }),
+    canImport = canImportMedia(user.role),
+    filtered = useMemo(
+      () =>
+        (tasks.data?.data || []).filter((t) =>
+          t.name.toLowerCase().includes(search.toLowerCase()),
+        ),
+      [tasks.data, search],
+    );
+  return (
+    <AppShell>
+      <div className="page">
+        <PageHeader
+          eyebrow={
+            projectId
+              ? projects.data?.data.find((p) => p.id === projectId)?.name
+              : "Все проекты"
+          }
+          title="Задачи"
+          description={`${tasks.data?.pagination.total ?? 0} доступных задач`}
+          action={
+            canImport ? (
+              <button className="button primary" onClick={() => setOpen(true)}>
+                <Upload size={17} />
+                Загрузить запись
+              </button>
+            ) : (
+              <button
+                className="button secondary"
+                disabled
+                title="Импорт доступен admin и supervisor"
+              >
+                <Upload size={17} />
+                Загрузить запись
+              </button>
+            )
+          }
+        />
+        <div className="filterbar">
+          <label>
+            <Filter size={15} />
+            <select
+              value={projectId}
+              onChange={(e) => {
+                const next = new URLSearchParams(params);
+                e.target.value
+                  ? next.set("projectId", e.target.value)
+                  : next.delete("projectId");
+                setParams(next);
+              }}
+            >
+              <option value="">Все проекты</option>
+              {projects.data?.data.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">Все статусы</option>
+              {Object.entries(labels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="search-control">
+            <Search size={16} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск задач"
+            />
+          </label>
+        </div>
+        {tasks.isLoading ? (
+          <Loading label="Загружаем задачи" />
+        ) : tasks.error ? (
+          <ErrorState error={tasks.error} onRetry={() => tasks.refetch()} />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title="Задач не найдено"
+            description={
+              search || status
+                ? "Измените фильтры поиска."
+                : "Загрузите медиа или импортируйте Gecko JSON."
+            }
+          />
+        ) : (
+          <div className="task-list">
+            <div className="task-list-head">
+              <span>Запись</span>
+              <span>Статус</span>
+              <span>Назначение</span>
+              <span>Обновлено</span>
+            </div>
+            {filtered.map((task) => (
+              <button
+                className="task-row"
+                key={task.id}
+                onClick={() => navigate(`/tasks/${task.id}/workspace`)}
+              >
+                <span>
+                  <FileAudio size={18} />
+                  <span>
+                    <b>{task.name}</b>
+                    <small>{task.id.slice(0, 8)}</small>
+                  </span>
+                </span>
+                <span>
+                  <i className={`status-mark status-${task.status}`} />
+                  {labels[task.status]}
+                </span>
+                <span>
+                  {task.assignedTo
+                    ? task.assignedTo.slice(0, 8)
+                    : "Не назначена"}
+                </span>
+                <time>
+                  {new Date(task.updatedAt).toLocaleDateString("ru-RU")}
+                </time>
+              </button>
+            ))}
+          </div>
+        )}
+        {open && (
+          <ImportDialog
+            projects={projects.data?.data || []}
+            initialProject={projectId}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </div>
+    </AppShell>
+  );
+}
