@@ -1,0 +1,26 @@
+{
+	email admin@purrscription.ru
+	# Uncomment to test against Let's Encrypt staging (avoids rate limits):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# Redirect www -> apex
+www.purrscription.ru {
+	redir https://purrscription.ru{uri} permanent
+}
+
+purrscription.ru {
+	encode zstd gzip
+
+	# Terminate TLS here and hand everything to the internal web (nginx) container,
+	# which already serves the SPA and proxies /api and /ws to the API.
+	reverse_proxy web:80 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+
+	# HSTS: force HTTPS for a year (only after you are sure HTTPS works)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}

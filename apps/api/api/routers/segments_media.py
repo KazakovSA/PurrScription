@@ -450,6 +450,8 @@ async def upload_media(
     )
     db.add(media)
     await db.flush()
+    await db.refresh(media)
+    await db.commit()
     return SuccessResponse(data=media_to_schema(media))
 
 

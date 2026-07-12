@@ -5,11 +5,15 @@ WORKDIR /app
 # Copy package files
 COPY ./package.json ./package-lock.json* ./
 COPY ./packages ./packages
+COPY ./Untitled.svg ./Untitled.svg
 COPY ./apps/web ./apps/web
 COPY ./apps/web/.npmrc* ./apps/web/
 
 # Install dependencies
 RUN npm install --legacy-peer-deps
+
+# Production build: public registration disabled (matches FEATURE_DEMO_MODE=false on API)
+ENV VITE_DEMO_MODE=false
 
 # Build frontend
 RUN npm run build -w apps/web

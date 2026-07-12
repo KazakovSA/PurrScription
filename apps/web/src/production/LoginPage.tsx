@@ -48,8 +48,8 @@ export function LoginPage() {
           </p>
         </div>
         <div className="signal" aria-hidden>
-          {Array.from({ length: 15 }, (_, i) => (
-            <i key={i} />
+          {Array.from({ length: 15 }, (_, index) => (
+            <i key={index} />
           ))}
         </div>
       </section>

@@ -1,8 +1,51 @@
 import { getAccessToken, useAppStore } from "./store";
-import type { ApiErrorPayload, AuthSession, Envelope, Role, User } from "./types";
+import type {
+  ApiErrorPayload,
+  AuthSession,
+  Envelope,
+  Role,
+  User,
+} from "./types";
 export const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ||
   "/api";
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 600_000;
+
+function requestTimeoutMs(options: RequestInit): number {
+  return options.body instanceof FormData ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
+
+function timeoutMessage(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds >= 60) {
+    const minutes = Math.round(seconds / 60);
+    return `Сервер не ответил за ${minutes} мин. Проверьте размер файла и соединение, затем повторите.`;
+  }
+  return `Сервер не ответил за ${seconds} сек. Повторите запрос.`;
+}
+
+function networkErrorMessage(): string {
+  if (API_BASE.startsWith("http") && !API_BASE.includes("localhost")) {
+    return "Не удалось связаться с сервером. Проверьте интернет и повторите.";
+  }
+  return "API недоступен. Запустите backend и повторите запрос.";
+}
+
+function localizeErrorMessage(message: string): string {
+  const map: Record<string, string> = {
+    "Registration requires admin authentication":
+      "Регистрация закрыта. Попросите администратора создать учётную запись.",
+    "Invalid email or password": "Неверный email или пароль",
+    "Email already registered": "Этот email уже зарегистрирован",
+    "Only admins can register users":
+      "Создавать пользователей может только администратор",
+    "Media file not found": "Медиафайл не найден. Повторите загрузку.",
+    "Cannot upload media": "Нет прав на загрузку медиа",
+  };
+  return map[message] ?? message;
+}
 
 function readErrorMessage(
   body: ApiErrorPayload | Record<string, unknown> | null,
@@ -10,7 +53,9 @@ function readErrorMessage(
 ): string {
   if (body && typeof body === "object") {
     const envelope = body as ApiErrorPayload;
-    if (envelope.error?.message) return envelope.error.message;
+    if (envelope.error?.message) {
+      return localizeErrorMessage(envelope.error.message);
+    }
     const detail = (body as { detail?: unknown }).detail;
     if (typeof detail === "string" && detail.trim()) return detail;
     if (Array.isArray(detail)) {
@@ -25,8 +70,8 @@ function readErrorMessage(
   }
   if ([500, 502, 503, 504].includes(status)) {
     return status === 502
-      ? "Backend не отвечает. Запустите API: .\\start.ps1 или docker compose up, затем обновите страницу."
-      : `Ошибка сервера (HTTP ${status}). Проверьте логи API и повторите.`;
+      ? "Сервер временно недоступен. Подождите и обновите страницу."
+      : `Ошибка сервера (HTTP ${status}). Повторите позже.`;
   }
   return `HTTP ${status}`;
 }
@@ -40,17 +85,17 @@ export class ApiError extends Error {
     super(message);
   }
 }
-export async function api<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function apiOnce<T>(path: string, options: RequestInit): Promise<T> {
   const headers = new Headers(options.headers),
     token = getAccessToken();
+  if (API_BASE.includes("ngrok-free.app"))
+    headers.set("ngrok-skip-browser-warning", "purrscription");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
+  const timeoutMs = requestTimeoutMs(options);
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
   let response: Response;
@@ -65,9 +110,7 @@ export async function api<T>(
     throw new ApiError(
       0,
       timedOut ? "REQUEST_TIMEOUT" : "NETWORK_ERROR",
-      timedOut
-        ? "Backend не ответил за 15 секунд. Перезапустите API и повторите вход."
-        : "API недоступен. Запустите backend и повторите запрос.",
+      timedOut ? timeoutMessage(timeoutMs) : networkErrorMessage(),
     );
   } finally {
     window.clearTimeout(timeout);
@@ -75,10 +118,7 @@ export async function api<T>(
   }
   if (response.status === 204) return undefined as T;
   const body = (await response.json().catch(() => null)) as
-    | ApiErrorPayload
-    | Record<string, unknown>
-    | T
-    | null;
+    ApiErrorPayload | Record<string, unknown> | T | null;
   if (!response.ok) {
     const message = readErrorMessage(
       body as ApiErrorPayload | Record<string, unknown> | null,
@@ -93,6 +133,34 @@ export async function api<T>(
     );
   }
   return body as T;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function api<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  // Only auto-retry safe (idempotent) reads. POST/PATCH/DELETE may have already
+  // reached the server on a transient network error, so retrying could duplicate.
+  const retriable = method === "GET" || method === "HEAD";
+  const maxAttempts = retriable ? 3 : 1;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiOnce<T>(path, options);
+    } catch (error) {
+      lastError = error;
+      const transient =
+        error instanceof ApiError &&
+        (error.code === "NETWORK_ERROR" || error.code === "REQUEST_TIMEOUT");
+      if (!transient || attempt === maxAttempts || options.signal?.aborted)
+        throw error;
+      await sleep(500 * attempt);
+    }
+  }
+  throw lastError;
 }
 export async function loginRequest(email: string, password: string) {
   return (
@@ -129,11 +197,16 @@ export const assetUrl = (path?: string | null) =>
 export async function downloadAuthenticated(path: string, filename: string) {
   const token = getAccessToken();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 30_000);
+  const timeout = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(API_BASE.includes("ngrok-free.app")
+          ? { "ngrok-skip-browser-warning": "purrscription" }
+          : {}),
+      },
       signal: controller.signal,
     });
   } catch {
@@ -147,9 +220,7 @@ export async function downloadAuthenticated(path: string, filename: string) {
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as
-      | ApiErrorPayload
-      | Record<string, unknown>
-      | null;
+      ApiErrorPayload | Record<string, unknown> | null;
     throw new ApiError(
       response.status,
       (body as ApiErrorPayload | null)?.error?.code || "DOWNLOAD_FAILED",
@@ -171,7 +242,11 @@ export function mediaPlayUrl(id: string) {
 }
 export function mediaFetchParams(): RequestInit {
   const token = getAccessToken();
-  return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (API_BASE.includes("ngrok-free.app"))
+    headers["ngrok-skip-browser-warning"] = "purrscription";
+  return { headers };
 }
 const MIME_BY_EXT: Record<string, string> = {
   mp4: "video/mp4",
@@ -255,10 +330,27 @@ const decodeAudioPeaksFromBuffer = async (buffer: ArrayBuffer) => {
     void ctx.close();
   }
 };
-const loadMediaBlob = async (url: string) => {
+const loadMediaBlob = async (
+  url: string,
+  onProgress?: (percent: number) => void,
+) => {
   const response = await fetch(url, mediaFetchParams());
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.blob();
+  const total = Number(response.headers.get("content-length")) || 0;
+  if (!response.body || !total) return response.blob();
+  const reader = response.body.getReader();
+  const chunks: ArrayBuffer[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(new Uint8Array(value).buffer as ArrayBuffer);
+    received += value.byteLength;
+    onProgress?.(Math.min(99, Math.round((received / total) * 100)));
+  }
+  return new Blob(chunks, {
+    type: response.headers.get("content-type") || "application/octet-stream",
+  });
 };
 export const placeholderPeaks = (_duration: number, length = 16_384) => {
   // A flat line is honest when the browser cannot decode the audio track. A generated
@@ -276,24 +368,34 @@ export async function prepareWaveformMedia(
   mediaName: string,
   onProgress?: (stage: "buffer" | "decode", percent: number) => void,
 ) {
-  const streamUrl = mediaPlayUrl(mediaId),
+  const authenticatedUrl = mediaPlayUrl(mediaId),
     mime = guessMediaMime(mediaName),
     videoFile = isVideoMedia(mime, mediaName);
   onProgress?.("buffer", 5);
-  // Stream directly (HTTP range requests) so large videos start fast instead of
-  // waiting for a full download. Same-origin via the Vite proxy keeps Firefox/Safari happy.
+  // A media element cannot attach Authorization or tunnel headers. Fetch once with
+  // credentials, then let video/audio and WaveSurfer share the same local Blob URL.
+  const blob = await loadMediaBlob(authenticatedUrl, (percent) =>
+    onProgress?.("buffer", percent),
+  );
+  const streamUrl = URL.createObjectURL(blob);
+  onProgress?.("buffer", 90);
   const probe = document.createElement(videoFile ? "video" : "audio");
   probe.preload = "metadata";
   probe.src = streamUrl;
-  const duration = await waitMediaReady(probe);
-  probe.removeAttribute("src");
-  probe.load();
+  let duration: number;
+  try {
+    duration = await waitMediaReady(probe);
+  } catch (error) {
+    URL.revokeObjectURL(streamUrl);
+    throw error;
+  } finally {
+    probe.removeAttribute("src");
+    probe.load();
+  }
   onProgress?.("buffer", 100);
   let peaks = placeholderPeaks(duration);
   onProgress?.("decode", 0);
   try {
-    // Peaks need the whole file decoded; fetch it separately so playback is not blocked.
-    const blob = await loadMediaBlob(streamUrl);
     const decoded = await decodeAudioPeaksFromBuffer(await blob.arrayBuffer());
     peaks = decoded.peaks;
     onProgress?.("decode", 100);

@@ -7,6 +7,9 @@ import {
   Play,
   Rewind,
   RotateCcw,
+  Save,
+  Scissors,
+  Trash2,
   Volume2,
   ZoomIn,
   ZoomOut,
@@ -53,11 +56,16 @@ interface Props {
   comments: TimelineComment[];
   presence: PresenceMember[];
   onSelect: (id: string | null) => void;
+  onFollowSelect: (id: string) => void;
   onBoundaryChange: (id: string, start: number, end: number) => Promise<void>;
   onCreate: (start: number, end: number) => Promise<void>;
   onAddComment: (comment: Omit<TimelineComment, "id">) => void;
   onRemoveComment: (id: string) => void;
   onTimeChange: (time: number) => void;
+  onPlayingChange?: (playing: boolean) => void;
+  onDeleteSegment?: (segment: Segment) => void;
+  onSplitSegment?: (segment: Segment) => void;
+  onSaveSegment?: () => void;
 }
 export const WaveformEditor = memo(function WaveformEditor({
   mediaId,
@@ -70,11 +78,16 @@ export const WaveformEditor = memo(function WaveformEditor({
   comments,
   presence,
   onSelect,
+  onFollowSelect,
   onBoundaryChange,
   onCreate,
   onAddComment,
   onRemoveComment,
   onTimeChange,
+  onPlayingChange,
+  onDeleteSegment,
+  onSplitSegment,
+  onSaveSegment,
 }: Props) {
   const container = useRef<HTMLDivElement>(null),
     mediaMountRef = useRef<HTMLDivElement>(null),
@@ -90,6 +103,7 @@ export const WaveformEditor = memo(function WaveformEditor({
     activeIdRef = useRef<string | null>(null),
     paddingRef = useRef(0.3),
     onSelectRef = useRef(onSelect),
+    onFollowSelectRef = useRef(onFollowSelect),
     onBoundaryRef = useRef(onBoundaryChange),
     onCreateRef = useRef(onCreate),
     stopAt = useRef<number | null>(null),
@@ -133,6 +147,7 @@ export const WaveformEditor = memo(function WaveformEditor({
   activeIdRef.current = activeId;
   paddingRef.current = padding;
   onSelectRef.current = onSelect;
+  onFollowSelectRef.current = onFollowSelect;
   onBoundaryRef.current = onBoundaryChange;
   onCreateRef.current = onCreate;
   const paintCurrentTime = (value: number) => {
@@ -171,6 +186,7 @@ export const WaveformEditor = memo(function WaveformEditor({
       activeIdRef,
       paddingRef,
       onSelectRef,
+      onFollowSelectRef,
       onBoundaryRef,
       onCreateRef,
       stopAt,
@@ -238,7 +254,7 @@ export const WaveformEditor = memo(function WaveformEditor({
       if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
       event.preventDefault();
       const zoomScale = Math.max(1, zoomRef.current / 60);
-      wrapper.scrollLeft += event.deltaY * 0.35 / Math.sqrt(zoomScale);
+      wrapper.scrollLeft += (event.deltaY * 0.35) / Math.sqrt(zoomScale);
     };
     host.addEventListener("wheel", scrollTimeline, { passive: false });
     return () => host.removeEventListener("wheel", scrollTimeline);
@@ -270,58 +286,6 @@ export const WaveformEditor = memo(function WaveformEditor({
       region.element?.classList.toggle("selected-region", selected);
       region.element?.style.setProperty("--region-color", color.solid);
       region.element?.style.setProperty("opacity", selected ? ".78" : ".58");
-      const editors = presence.filter(
-        (member) => member.focusedSegmentId === segment.id,
-      );
-      const others = editors.filter(
-        (member) => member.userId !== currentUserId,
-      );
-      if (editors.length && region.element) {
-        const highlight = others[0] ?? editors[0];
-        region.element.style.setProperty(
-          "box-shadow",
-          `inset 0 0 0 2px ${highlight.color}, 0 0 0 2px ${highlight.color}`,
-        );
-        region.element.setAttribute(
-          "title",
-          `Сейчас здесь: ${editors.map((member) => member.userName).join(", ")}`,
-        );
-      }
-      if (others.length && region.element) {
-        region.element.style.setProperty("overflow", "visible");
-        region.element.style.setProperty("opacity", "1");
-        region.element.classList.add("has-presence");
-        const badges = document.createElement("div");
-        badges.className = "gecko-presence-badges";
-        others.forEach((member) => {
-          const badge = document.createElement("span");
-          badge.className = "gecko-presence-badge";
-          badge.style.setProperty("--presence-color", member.color);
-          badge.title = `${member.userName} — редактирует этот сегмент`;
-          const avatar = document.createElement("span");
-          avatar.className = "gecko-presence-avatar";
-          if (member.avatarUrl) {
-            const img = document.createElement("img");
-            img.src = assetUrl(member.avatarUrl);
-            img.alt = "";
-            avatar.appendChild(img);
-          } else {
-            avatar.textContent = member.userName
-              .split(" ")
-              .map((part) => part[0])
-              .join("")
-              .slice(0, 2)
-              .toUpperCase();
-          }
-          const label = document.createElement("span");
-          label.className = "gecko-presence-name";
-          label.textContent = member.userName;
-          badge.appendChild(avatar);
-          badge.appendChild(label);
-          badges.appendChild(badge);
-        });
-        region.element.appendChild(badges);
-      }
     });
     comments.forEach((comment) => {
       const hex = commentColorHex(comment.color);
@@ -364,17 +328,68 @@ export const WaveformEditor = memo(function WaveformEditor({
       region.element?.style.setProperty("overflow", "visible");
       region.element?.style.setProperty("border", `1px solid ${hex}`);
     });
-  }, [
-    comments,
-    currentUserId,
-    duration,
-    editable,
-    presence,
-    onRemoveComment,
-    ready,
-    segments,
-    segmentsKey,
-  ]);
+  }, [comments, duration, editable, onRemoveComment, ready, segments, segmentsKey]);
+  // Presence highlights are applied to existing regions WITHOUT rebuilding them,
+  // so a collaborator's focus/join ping never clears a region while you are
+  // resizing it (which previously discarded the in-progress boundary edit).
+  useEffect(() => {
+    if (!ready || !regions.current) return;
+    for (const region of regions.current.getRegions()) {
+      if (region.id.includes(":") || region.id.startsWith("__")) continue;
+      const element = region.element;
+      if (!element) continue;
+      element.querySelector(".gecko-presence-badges")?.remove();
+      element.classList.remove("has-presence");
+      element.style.removeProperty("box-shadow");
+      const editors = presence.filter(
+        (member) => member.focusedSegmentId === region.id,
+      );
+      const others = editors.filter((member) => member.userId !== currentUserId);
+      if (!editors.length) continue;
+      const highlight = others[0] ?? editors[0];
+      element.style.setProperty(
+        "box-shadow",
+        `inset 0 0 0 2px ${highlight.color}, 0 0 0 2px ${highlight.color}`,
+      );
+      element.setAttribute(
+        "title",
+        `Сейчас здесь: ${editors.map((member) => member.userName).join(", ")}`,
+      );
+      if (!others.length) continue;
+      element.style.setProperty("overflow", "visible");
+      element.classList.add("has-presence");
+      const badges = document.createElement("div");
+      badges.className = "gecko-presence-badges";
+      others.forEach((member) => {
+        const badge = document.createElement("span");
+        badge.className = "gecko-presence-badge";
+        badge.style.setProperty("--presence-color", member.color);
+        badge.title = `${member.userName} — редактирует этот сегмент`;
+        const avatar = document.createElement("span");
+        avatar.className = "gecko-presence-avatar";
+        if (member.avatarUrl) {
+          const img = document.createElement("img");
+          img.src = assetUrl(member.avatarUrl);
+          img.alt = "";
+          avatar.appendChild(img);
+        } else {
+          avatar.textContent = member.userName
+            .split(" ")
+            .map((part) => part[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase();
+        }
+        const label = document.createElement("span");
+        label.className = "gecko-presence-name";
+        label.textContent = member.userName;
+        badge.appendChild(avatar);
+        badge.appendChild(label);
+        badges.appendChild(badge);
+      });
+      element.appendChild(badges);
+    }
+  }, [presence, currentUserId, ready, segmentsKey]);
   useEffect(() => {
     if (!ready || !regions.current) return;
     for (const region of regions.current.getRegions()) {
@@ -390,11 +405,8 @@ export const WaveformEditor = memo(function WaveformEditor({
         resizeEnd: editable,
       });
       region.element?.classList.toggle("selected-region", selected);
-      region.element?.style.setProperty(
-        "border",
-        `${selected ? 2 : 1}px solid ${color.solid}`,
-      );
-      region.element?.style.setProperty("opacity", selected ? ".78" : ".58");
+      region.element?.style.setProperty("--region-color", color.solid);
+      region.element?.style.setProperty("opacity", selected ? ".82" : ".5");
     }
   }, [activeId, editable, ready, segments]);
   useEffect(() => {
@@ -487,6 +499,19 @@ export const WaveformEditor = memo(function WaveformEditor({
       Boolean(session?.isVideo && !session.video.paused && !session.video.ended)
     );
   }, [mediaId]);
+  useEffect(() => {
+    if (!ready) return;
+    let timer = 0;
+    const tick = () => {
+      setPlaying(isPlaybackActive());
+      timer = window.setTimeout(tick, 200);
+    };
+    tick();
+    return () => window.clearTimeout(timer);
+  }, [ready, isPlaybackActive]);
+  useEffect(() => {
+    onPlayingChange?.(playing);
+  }, [playing, onPlayingChange]);
   const syncVideoTime = useCallback(
     (time: number) => {
       const session = peekWaveSession(mediaId);
@@ -955,6 +980,34 @@ export const WaveformEditor = memo(function WaveformEditor({
           <LocateFixed size={15} />
           Follow
         </button>
+        {editable && active && (
+          <div className="segment-actions" role="group" aria-label="Действия с сегментом">
+            <button
+              className="icon-button"
+              title="Сохранить сегмент"
+              aria-label="Сохранить сегмент"
+              onClick={() => onSaveSegment?.()}
+            >
+              <Save size={16} />
+            </button>
+            <button
+              className="icon-button"
+              title="Разделить сегмент посередине"
+              aria-label="Разделить сегмент"
+              onClick={() => onSplitSegment?.(active)}
+            >
+              <Scissors size={16} />
+            </button>
+            <button
+              className="icon-button danger"
+              title="Удалить сегмент"
+              aria-label="Удалить сегмент"
+              onClick={() => onDeleteSegment?.(active)}
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
         <label className="zoom-field" aria-label="Масштаб дорожки">
           <button
             type="button"

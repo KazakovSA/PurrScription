@@ -12,7 +12,15 @@ import { api, assetUrl, registerRequest } from "./api";
 import { defaultCapabilities } from "./permissions";
 import { AppShell, PageHeader, roleLabels } from "./AppShell";
 import { useAppStore } from "./store";
-import type { Envelope, Paginated, Project, Role, Task, Term, User } from "./types";
+import type {
+  Envelope,
+  Paginated,
+  Project,
+  Role,
+  Task,
+  Term,
+  User,
+} from "./types";
 import { EmptyState, ErrorState, Loading } from "./ui";
 export function AnalyticsPage() {
   const projects = useQuery({
@@ -50,6 +58,27 @@ export function AnalyticsPage() {
           title="Аналитика"
           description="Показатели рассчитаны только из доступных вам задач"
         />
+        <section className="feature-guide" aria-label="Как работает словарь">
+          <strong>Как использовать словарь</strong>
+          <ol>
+            <li>
+              Выберите проект: словарь принадлежит проекту, а не отдельной
+              задаче.
+            </li>
+            <li>
+              Добавьте точное написание термина, нормализацию/перевод и
+              контекст.
+            </li>
+            <li>
+              Переведите термин в «На проверке», затем в «Утверждён» или
+              «Отклонён».
+            </li>
+          </ol>
+          <p>
+            Утверждённые термины — эталон для аннотаторов и верификаторов;
+            спорные оставляйте на проверке с пояснением в поле контекста.
+          </p>
+        </section>
         <section className="metrics">
           <div>
             <FileAudio size={18} />

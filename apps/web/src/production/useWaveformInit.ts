@@ -20,6 +20,7 @@ import {
   getWaveSession,
   mountWaveNodes,
   reuseWaveSession,
+  setSessionBlobUrl,
 } from "./waveSession";
 
 type Tool = "navigate" | "comment";
@@ -38,6 +39,7 @@ type InitRefs = {
   activeIdRef: MutableRefObject<string | null>;
   paddingRef: MutableRefObject<number>;
   onSelectRef: MutableRefObject<(id: string | null) => void>;
+  onFollowSelectRef: MutableRefObject<(id: string) => void>;
   onBoundaryRef: MutableRefObject<
     (id: string, start: number, end: number) => Promise<void>
   >;
@@ -104,7 +106,11 @@ function attachWaveHandlers(
     }
   };
 
-  const applyRegionBounds = (region: RegionBounds, start: number, end: number) => {
+  const applyRegionBounds = (
+    region: RegionBounds,
+    start: number,
+    end: number,
+  ) => {
     const duration = instance.getDuration();
     const clamped = clampSegmentBounds(
       region.id,
@@ -120,6 +126,30 @@ function attachWaveHandlers(
       region.setOptions(clamped);
     }
     return clamped;
+  };
+
+  // Follow mode: keep the active segment (and therefore the transcript text)
+  // tracking the playhead. For overlapping segments prefer the one that started
+  // latest so the text advances instead of sticking on the previous segment.
+  // When loop is on we must NOT re-select, otherwise the loop bounds drift.
+  // This is driven by both `timeupdate` and `audioprocess` and does not depend
+  // on `instance.isPlaying()`, which is unreliable for video/MediaElement.
+  let lastFollowValue = -1;
+  const followSelectAtTime = (value: number) => {
+    if (!refs.followRef.current || refs.loopRef.current) return;
+    if (Math.abs(value - lastFollowValue) < 0.02) return;
+    lastFollowValue = value;
+    let best: Segment | null = null;
+    for (const seg of refs.segmentRef.current) {
+      if (
+        value >= seg.start &&
+        value <= seg.end &&
+        (!best || seg.start > best.start)
+      )
+        best = seg;
+    }
+    if (best && best.id !== refs.activeIdRef.current)
+      refs.onFollowSelectRef.current(best.id);
   };
 
   const onRegionBoundsChange = (region: RegionBounds) => {
@@ -160,7 +190,24 @@ function attachWaveHandlers(
     session.video.addEventListener("seeked", onVideoSeeked);
   }
 
+  // Make the waveform fill its container (minus the timeline ruler) so there is
+  // no dead white space below it - especially after zooming/scrolling.
+  const TIMELINE_HEIGHT = 22;
+  let lastWaveHeight = 0;
+  const fitWaveHeight = () => {
+    const available = session.canvasHost.clientHeight;
+    if (available < TIMELINE_HEIGHT + 60) return;
+    const target = Math.round(available - TIMELINE_HEIGHT);
+    if (Math.abs(target - lastWaveHeight) < 2) return;
+    lastWaveHeight = target;
+    instance.setOptions({ height: target });
+  };
+  const heightObserver = new ResizeObserver(fitWaveHeight);
+  heightObserver.observe(session.canvasHost);
+  fitWaveHeight();
+
   return [
+    () => heightObserver.disconnect(),
     instance.on("loading", (value) => setters.setLoading(value)),
     instance.on("ready", (value) => {
       setters.setError("");
@@ -176,28 +223,33 @@ function attachWaveHandlers(
     instance.on("timeupdate", (value) => {
       refs.paintCurrentTime(value);
       syncVideo(value);
-      if (refs.followRef.current && instance.isPlaying()) {
-        instance.setScrollTime(value);
-      }
+      followSelectAtTime(value);
       const pad = refs.paddingRef.current;
       const loopOn = refs.loopRef.current;
       const active = refs.activeIdRef.current;
       if (refs.stopAt.current !== null && value >= refs.stopAt.current) {
-        instance.pause();
-        if (loopOn && active) {
-          const segment = refs.segmentRef.current.find((s) => s.id === active);
-          if (segment) {
-            instance.setTime(Math.max(0, segment.start - pad));
-            void instance.play();
-            refs.stopAt.current = Math.min(
-              instance.getDuration(),
-              segment.end + pad,
-            );
-          }
+        const segment = loopOn && active
+          ? refs.segmentRef.current.find((s) => s.id === active)
+          : null;
+        if (segment) {
+          // Loop: rewind to the segment start and keep playing. We deliberately
+          // avoid pause()+play() in the same tick, which the browser often drops.
+          const start = Math.max(0, segment.start - pad);
+          instance.setTime(start);
+          syncVideo(start);
+          refs.stopAt.current = Math.min(
+            instance.getDuration(),
+            segment.end + pad,
+          );
+          if (!instance.isPlaying()) void instance.play();
         } else {
+          instance.pause();
           refs.stopAt.current = null;
         }
       }
+    }),
+    instance.on("audioprocess", (value) => {
+      followSelectAtTime(value);
     }),
     instance.on("play", () => {
       if (session.isVideo) {
@@ -329,7 +381,11 @@ export function useWaveformInit(
     const attachReady = (
       session: NonNullable<ReturnType<typeof reuseWaveSession>>,
     ) => {
-      if (!refs.container.current || !refs.mediaMount.current || !refs.videoPanel.current)
+      if (
+        !refs.container.current ||
+        !refs.mediaMount.current ||
+        !refs.videoPanel.current
+      )
         return;
       mountWaveNodes(session, {
         mediaMount: refs.mediaMount.current,
@@ -392,7 +448,12 @@ export function useWaveformInit(
       },
     )
       .then((prepared) => {
-        if (cancelled || !refs.container.current || !refs.mediaMount.current || !refs.videoPanel.current)
+        if (
+          cancelled ||
+          !refs.container.current ||
+          !refs.mediaMount.current ||
+          !refs.videoPanel.current
+        )
           return;
         if (session.wave && session.regions) return;
 
@@ -409,6 +470,8 @@ export function useWaveformInit(
         setters.setDuration(prepared.duration);
 
         session.isVideo = prepared.isVideo;
+        if (prepared.streamUrl.startsWith("blob:"))
+          setSessionBlobUrl(session, prepared.streamUrl);
         mountWaveNodes(session, {
           mediaMount: refs.mediaMount.current,
           videoPanel: refs.videoPanel.current,

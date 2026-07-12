@@ -11,12 +11,12 @@ import {
   ChevronRight,
   CloudOff,
   Download,
+  ListChecks,
   MessageSquare,
   PanelLeft,
   PanelRight,
-  Save,
-  Scissors,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Video,
   Wifi,
@@ -67,6 +67,14 @@ import {
   defaultCapabilities,
   isReadOnlyWorkspace,
 } from "./permissions";
+import { HotkeysOverlay } from "./HotkeysOverlay";
+import { analyzeSegments, submitReadiness } from "./segmentAnalysis";
+import type { SegmentIssue } from "./segmentAnalysis";
+import {
+  CHECKLIST_ITEMS,
+  VerifierChecklist,
+  useVerifierChecklist,
+} from "./VerifierChecklist";
 
 const statusLabels: Record<string, string> = {
   new: "Новая",
@@ -129,7 +137,9 @@ function TaskAssignmentPanel({ taskId }: { taskId: string }) {
       await assignments.refetch();
       await qc.invalidateQueries({ queryKey: ["task", taskId] });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось назначить диапазон");
+      setError(
+        e instanceof Error ? e.message : "Не удалось назначить диапазон",
+      );
     }
   };
   const removeAssignment = async (assignmentId: string) => {
@@ -232,11 +242,16 @@ function SegmentRail({
   editable: boolean;
 }) {
   const [search, setSearch] = useState(""),
+    activeRowRef = useRef<HTMLDivElement | null>(null),
     filtered = segments.filter((s) =>
       (s.text + " " + (s.speaker || ""))
         .toLowerCase()
         .includes(search.toLowerCase()),
     );
+  // Keep the active segment visible when playback (follow mode) advances it.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
   return (
     <aside className="segment-rail">
       <header>
@@ -250,10 +265,12 @@ function SegmentRail({
       <div>
         {filtered.map((segment, index) => {
           const color = speakerColor(segment.speaker);
+          const isActive = activeId === segment.id;
           return (
             <div
               key={segment.id}
-              className={`segment-rail-row ${activeId === segment.id ? "active" : ""}`}
+              ref={isActive ? activeRowRef : null}
+              className={`segment-rail-row ${isActive ? "active" : ""}`}
               style={{ "--speaker": color.solid } as React.CSSProperties}
             >
               <button
@@ -360,17 +377,15 @@ function SegmentEditor({
   segments,
   editable,
   onSaved,
-  onSplit,
-  onDelete,
   playbackTime,
+  playing,
 }: {
   segment: Segment;
   segments: Segment[];
   editable: boolean;
   onSaved: (segment: Segment) => void;
-  onSplit: (segment: Segment, at: number) => void;
-  onDelete: (segment: Segment) => Promise<void>;
   playbackTime: number;
+  playing: boolean;
 }) {
   const [draft, setDraft] = useState(segment),
     [saved, setSaved] = useState<"idle" | "saving" | "saved" | "error">("idle"),
@@ -390,11 +405,11 @@ function SegmentEditor({
       next = segments[index + 1];
     if (value.start < 0 || value.end - value.start < 0.1) {
       setMessage("Сегмент должен быть не короче 0,10 секунды.");
-      return;
+      return false;
     }
     if ((prev && value.start < prev.end) || (next && value.end > next.start)) {
       setMessage("Границы не должны пересекать соседние сегменты.");
-      return;
+      return false;
     }
     setSaved("saving");
     setMessage("");
@@ -414,6 +429,7 @@ function SegmentEditor({
       setDraft(result);
       setSaved("saved");
       onSaved(result);
+      return true;
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -427,11 +443,53 @@ function SegmentEditor({
       }
       setSaved("error");
       setMessage(error instanceof Error ? error.message : "Ошибка сохранения");
+      return false;
     }
   };
   const dirty =
     JSON.stringify([draft.text, draft.speaker, draft.start, draft.end]) !==
     JSON.stringify([segment.text, segment.speaker, segment.start, segment.end]);
+  const setSegmentDirty = useAppStore((s) => s.setSegmentDirty);
+  useEffect(() => {
+    setSegmentDirty(dirty && editable);
+    return () => setSegmentDirty(false);
+  }, [dirty, editable, setSegmentDirty]);
+  useEffect(() => {
+    if (!editable || !dirty || saved === "saving") return;
+    const timer = window.setTimeout(() => void save(), 900);
+    return () => window.clearTimeout(timer);
+    // save intentionally uses the draft captured by this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, dirty, editable, saved]);
+  useEffect(() => {
+    const flush = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          handled: boolean;
+          done: (error?: unknown) => void;
+        }>
+      ).detail;
+      detail.handled = true;
+      if (!dirty) {
+        detail.done();
+        return;
+      }
+      void save()
+        .then((ok) =>
+          ok
+            ? detail.done()
+            : detail.done(
+                new Error("Сначала исправьте ошибку сохранения сегмента"),
+              ),
+        )
+        .catch(detail.done);
+    };
+    window.addEventListener("purrscription:flush-segment", flush);
+    return () =>
+      window.removeEventListener("purrscription:flush-segment", flush);
+    // Re-register when the editable revision changes so flush exports that exact revision.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, draft, segment, segments]);
   const tokens = draft.text.match(
     /[\p{L}\p{N}]+(?:[-'][\p{L}\p{N}]+)*|[^\p{L}\p{N}]+/gu,
   ) ?? [draft.text];
@@ -445,7 +503,7 @@ function SegmentEditor({
       typeof word.end === "number",
   );
   const isSpeaking =
-    playbackTime >= segment.start && playbackTime <= segment.end;
+    playing && playbackTime >= segment.start && playbackTime <= segment.end;
   const exactSpokenWord = exactWords.findIndex(
     (word) => playbackTime >= word.start! && playbackTime <= word.end!,
   );
@@ -567,43 +625,6 @@ function SegmentEditor({
             ))}
           </datalist>
         </label>
-        <div className="editor-buttons">
-          <button
-            className="button danger"
-            disabled={!editable || saved === "saving"}
-            title="Удалить выбранный сегмент"
-            onClick={() => void onDelete(segment)}
-          >
-            <Trash2 size={15} />
-            Удалить
-          </button>
-          <button
-            className="button secondary"
-            disabled={!editable}
-            title={
-              editable
-                ? "Разделить в середине сегмента"
-                : "Нет прав на редактирование"
-            }
-            onClick={() =>
-              onSplit(
-                segment,
-                Number(((segment.start + segment.end) / 2).toFixed(2)),
-              )
-            }
-          >
-            <Scissors size={15} />
-            Разделить
-          </button>
-          <button
-            className="button primary"
-            disabled={!editable || !dirty || saved === "saving"}
-            onClick={() => save()}
-          >
-            <Save size={15} />
-            {saved === "saving" ? "Сохранение…" : "Сохранить"}
-          </button>
-        </div>
       </div>
       {!editable && (
         <p className="permission-note">
@@ -634,6 +655,9 @@ function SegmentEditor({
 function Inspector({
   task,
   segment,
+  segments,
+  duration,
+  listenedRatio,
   quality,
   qualityChecking,
   comments,
@@ -641,9 +665,13 @@ function Inspector({
   onComment,
   onTaskChanged,
   onSelectComment,
+  onJumpToSegment,
 }: {
   task: Task;
   segment: Segment | null;
+  segments: Segment[];
+  duration: number;
+  listenedRatio: number;
   quality: QualityReport | undefined;
   qualityChecking: boolean;
   comments: Comment[];
@@ -651,16 +679,47 @@ function Inspector({
   onComment: (comment: Comment) => void;
   onTaskChanged: () => void;
   onSelectComment: (segmentId: string) => void;
+  onJumpToSegment: (segmentId: string, time?: number) => void;
 }) {
   const user = useAppStore((s) => s.user)!,
+    segmentDirty = useAppStore((s) => s.segmentDirty),
     qc = useQueryClient(),
-    [tab, setTab] = useState<"quality" | "comments">("quality"),
+    [tab, setTab] = useState<"quality" | "ai" | "checklist" | "comments">(
+      "quality",
+    ),
     [text, setText] = useState(""),
     [commentColor, setCommentColor] = useState<CommentColorId>(
       DEFAULT_COMMENT_COLOR,
     ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const checklist = useVerifierChecklist(task.id, user.id);
+  const aiIssues = useMemo<SegmentIssue[]>(
+    () => analyzeSegments(segments, duration),
+    [segments, duration],
+  );
+  const readiness = useMemo(
+    () =>
+      submitReadiness({
+        segments,
+        duration,
+        comments,
+        checklistComplete: checklist.allChecked,
+        listenedRatio,
+        hasUnsaved: segmentDirty,
+      }),
+    [
+      segments,
+      duration,
+      comments,
+      checklist.allChecked,
+      listenedRatio,
+      segmentDirty,
+    ],
+  );
+  const blockers = readiness.filter((c) => c.blocking && !c.ok);
+  const readyToSubmit = blockers.length === 0;
+  const aiErrorCount = aiIssues.filter((i) => i.severity === "error").length;
   const createComment = async () => {
     if (!segment || !text.trim()) return;
     setBusy(true);
@@ -732,7 +791,8 @@ function Inspector({
     canSubmit =
       ["admin", "supervisor", "annotator"].includes(user.role) &&
       ["in_progress", "rework", "fixed"].includes(task.status),
-    canVerify = canVerifyTask(user.role, task, user.id) && task.status === "review",
+    canVerify =
+      canVerifyTask(user.role, task, user.id) && task.status === "review",
     canAssign = defaultCapabilities(user.role).assignTasks;
   return (
     <aside className="inspector">
@@ -740,6 +800,8 @@ function Inspector({
         {(
           [
             ["quality", "Quality Gate"],
+            ["ai", "AI-помощник"],
+            ["checklist", "Чек-лист"],
             ["comments", "Комментарии"],
           ] as const
         ).map(([id, label]) => (
@@ -754,6 +816,14 @@ function Inspector({
             }}
           >
             {label}
+            {id === "ai" && aiErrorCount > 0 && (
+              <span className="tab-badge">{aiErrorCount}</span>
+            )}
+            {id === "checklist" && (
+              <span className="tab-badge muted">
+                {checklist.checkedCount}/{CHECKLIST_ITEMS.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -831,6 +901,29 @@ function Inspector({
             {qualityChecking ? "Проверяем…" : "Перезапустить проверку"}
           </button>
           <div className="workflow-actions">
+            {user.role === "verifier" && (
+              <div className="verifier-guide">
+                <strong>Проверка задачи</strong>
+                <ol>
+                  <li>
+                    Прослушайте сегменты и проверьте текст, спикера и границы.
+                  </li>
+                  <li>Фиксируйте ошибки комментариями на нужном тайминге.</li>
+                  <li>
+                    Перезапустите Quality Gate и устраните блокирующие ошибки.
+                  </li>
+                  <li>
+                    Примите задачу или верните её с обязательным пояснением.
+                  </li>
+                </ol>
+                {task.status !== "review" && (
+                  <small>
+                    Решение станет доступно, когда аннотатор отправит задачу на
+                    проверку.
+                  </small>
+                )}
+              </div>
+            )}
             {canStart && (
               <button
                 className="button primary full"
@@ -840,10 +933,34 @@ function Inspector({
                 Начать работу
               </button>
             )}
+            {(canSubmit || canVerify) && !readyToSubmit && (
+              <div className="readiness-gate">
+                <strong>
+                  <AlertTriangle size={14} /> Не готово · {blockers.length}
+                </strong>
+                <ul>
+                  {blockers.map((check) => (
+                    <li key={check.key}>{check.label}</li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="readiness-gate-link"
+                  onClick={() => setTab("checklist")}
+                >
+                  Открыть чек-лист проверки
+                </button>
+              </div>
+            )}
             {canSubmit && (
               <button
                 className="button primary full"
-                disabled={busy}
+                disabled={busy || !readyToSubmit}
+                title={
+                  readyToSubmit
+                    ? undefined
+                    : "Устраните блокеры готовности перед отправкой"
+                }
                 onClick={() => transition("submit")}
               >
                 Отправить на проверку
@@ -858,7 +975,12 @@ function Inspector({
                 />
                 <button
                   className="button primary full"
-                  disabled={busy}
+                  disabled={busy || !readyToSubmit}
+                  title={
+                    readyToSubmit
+                      ? undefined
+                      : "Завершите чек-лист и устраните блокеры перед приёмкой"
+                  }
                   onClick={() => transition("accept")}
                 >
                   <ShieldCheck size={15} />
@@ -866,13 +988,89 @@ function Inspector({
                 </button>
                 <button
                   className="button danger full"
-                  disabled={busy}
+                  disabled={busy || !text.trim()}
+                  title={
+                    !text.trim()
+                      ? "Укажите, что именно нужно исправить"
+                      : undefined
+                  }
                   onClick={() => transition("rework")}
                 >
                   Вернуть на доработку
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+      {tab === "ai" && (
+        <div className="inspector-body">
+          <div className="ai-head">
+            <Sparkles size={16} />
+            <div>
+              <strong>AI-помощник</strong>
+              <small>
+                Автоматический разбор расшифровки. Нажмите на подсказку, чтобы
+                перейти к сегменту.
+              </small>
+            </div>
+          </div>
+          {aiIssues.length === 0 ? (
+            <p className="quality-ok">
+              <Check size={16} />
+              Проблем не найдено — расшифровка выглядит чисто.
+            </p>
+          ) : (
+            aiIssues.map((issue) => (
+              <button
+                key={issue.key}
+                className={`ai-issue ${issue.severity}`}
+                onClick={() =>
+                  issue.segmentId &&
+                  onJumpToSegment(issue.segmentId, issue.time)
+                }
+              >
+                {issue.severity === "error" ? (
+                  <AlertTriangle size={15} />
+                ) : (
+                  <Sparkles size={15} />
+                )}
+                <span>
+                  <b>{issue.title}</b>
+                  <em>{issue.detail}</em>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+      {tab === "checklist" && (
+        <div className="inspector-body">
+          <VerifierChecklist
+            state={checklist.state}
+            toggle={checklist.toggle}
+            reset={checklist.reset}
+            checkedCount={checklist.checkedCount}
+            editable={
+              !isReadOnlyWorkspace(user.role) &&
+              !["accepted", "exported"].includes(task.status)
+            }
+          />
+          <div className="readiness">
+            <strong>Готовность к отправке</strong>
+            {readiness.map((check) => (
+              <div
+                key={check.key}
+                className={`readiness-item ${check.ok ? "ok" : check.blocking ? "blocker" : "warning"}`}
+              >
+                {check.ok ? (
+                  <Check size={15} />
+                ) : (
+                  <AlertTriangle size={15} />
+                )}
+                <span>{check.label}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -919,7 +1117,9 @@ function Inspector({
               </span>
               <span className="comment-copy">
                 <b>{c.author.name}</b>
-                <small className="comment-role">{roleLabels[c.author.role]}</small>
+                <small className="comment-role">
+                  {roleLabels[c.author.role]}
+                </small>
                 <p>{c.text}</p>
                 <small>
                   {c.timeSeconds != null
@@ -994,8 +1194,15 @@ export function WorkspacePage() {
     layout = useAppStore((s) => s.workspaceLayout),
     setWorkspaceLayout = useAppStore((s) => s.setWorkspaceLayout),
     [playbackTime, setPlaybackTime] = useState(0),
+    [playing, setPlaying] = useState(false),
     [exporting, setExporting] = useState(false),
+    [listenedRatio, setListenedRatio] = useState(0),
+    maxListenedRef = useRef(0),
     bootstrappedRef = useRef(id ? isWorkspaceBootstrapped(id) : false);
+  useEffect(() => {
+    maxListenedRef.current = 0;
+    setListenedRatio(0);
+  }, [id]);
   useEffect(() => {
     hydrateWorkspaceCache(qc, id);
   }, [qc, id]);
@@ -1049,7 +1256,8 @@ export function WorkspacePage() {
       enabled: !!id,
       staleTime: 15_000,
       queryFn: async () =>
-        (await api<Envelope<TaskAssignment[]>>(`/tasks/${id}/assignments`)).data,
+        (await api<Envelope<TaskAssignment[]>>(`/tasks/${id}/assignments`))
+          .data,
     });
   const myRanges = useMemo(() => {
     if (!user || user.role !== "annotator") return [];
@@ -1084,6 +1292,32 @@ export function WorkspacePage() {
       ),
     );
   }, [segmentsData, myRanges]);
+  const contentDuration = useMemo(
+    () => (visibleSegments || []).reduce((max, s) => Math.max(max, s.end), 0),
+    [visibleSegments],
+  );
+  const handleTimeChange = useCallback(
+    (value: number) => {
+      setPlaybackTime(value);
+      if (value > maxListenedRef.current + 0.05) {
+        maxListenedRef.current = value;
+        if (contentDuration > 0)
+          setListenedRatio(Math.min(1, value / contentDuration));
+      }
+    },
+    [contentDuration],
+  );
+  const jumpToSegment = useCallback(
+    (segmentId: string, time?: number) => {
+      select(segmentId);
+      window.dispatchEvent(
+        new CustomEvent("purrscription:seek-time", {
+          detail: { segmentId, time },
+        }),
+      );
+    },
+    [select],
+  );
   useEffect(() => {
     if (
       visibleSegments?.length &&
@@ -1094,7 +1328,22 @@ export function WorkspacePage() {
       select(null);
     }
   }, [activeId, visibleSegments, select]);
+  const playbackFollowRef = useRef(false);
+  const followSelect = useCallback(
+    (segmentId: string) => {
+      // Selection driven by playback follow: update the active segment (so the
+      // transcript text tracks the playhead) without broadcasting presence focus,
+      // which would otherwise spam the room and rebuild every waveform region.
+      playbackFollowRef.current = true;
+      select(segmentId);
+    },
+    [select],
+  );
   useEffect(() => {
+    if (playbackFollowRef.current) {
+      playbackFollowRef.current = false;
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent("purrscription:focus-segment", {
         detail: { segmentId: activeId },
@@ -1108,8 +1357,11 @@ export function WorkspacePage() {
       !isReadOnlyWorkspace(user.role) &&
       (user.role === "admin" ||
         user.role === "supervisor" ||
+        (user.role === "verifier" &&
+          taskData.status === "review" &&
+          taskData.assignedTo !== user.id) ||
         (user.role === "annotator" && taskData.assignedTo === user.id)) &&
-      !["review", "accepted", "exported"].includes(taskData.status),
+      !["accepted", "exported"].includes(taskData.status),
     );
   const updateCache = useCallback(
     (updated: Segment) => {
@@ -1141,7 +1393,8 @@ export function WorkspacePage() {
         updateCache(result);
       } catch (error) {
         await segments.refetch();
-        if (error instanceof ApiError && error.code === "SEGMENT_OVERLAP") return;
+        if (error instanceof ApiError && error.code === "SEGMENT_OVERLAP")
+          return;
         window.alert(
           error instanceof Error
             ? error.message
@@ -1175,7 +1428,8 @@ export function WorkspacePage() {
         void quality.refetch();
       } catch (error) {
         await segments.refetch();
-        if (error instanceof ApiError && error.code === "SEGMENT_OVERLAP") return;
+        if (error instanceof ApiError && error.code === "SEGMENT_OVERLAP")
+          return;
         window.alert(
           error instanceof Error ? error.message : "Не удалось создать сегмент",
         );
@@ -1324,6 +1578,21 @@ export function WorkspacePage() {
                 if (!id) return;
                 setExporting(true);
                 try {
+                  await new Promise<void>((resolve, reject) => {
+                    const detail = {
+                      handled: false,
+                      done: (error?: unknown) =>
+                        error ? reject(error) : resolve(),
+                    };
+                    window.dispatchEvent(
+                      new CustomEvent("purrscription:flush-segment", {
+                        detail,
+                      }),
+                    );
+                    if (!detail.handled) resolve();
+                  });
+                  await qc.invalidateQueries({ queryKey: ["segments", id] });
+                  await quality.refetch();
                   const result = (
                     await api<Envelope<ExportResult>>(`/tasks/${id}/export`, {
                       method: "POST",
@@ -1410,7 +1679,11 @@ export function WorkspacePage() {
                 Онлайн · {presence.length}
               </p>
               {presence.map((member) => (
-                <div className="presence-popover-row" role="listitem" key={member.userId}>
+                <div
+                  className="presence-popover-row"
+                  role="listitem"
+                  key={member.userId}
+                >
                   <span
                     className="presence-popover-avatar"
                     style={{ background: member.color }}
@@ -1428,7 +1701,9 @@ export function WorkspacePage() {
                   </span>
                   <span className="presence-popover-info">
                     <b>{member.userName}</b>
-                    <small>{roleLabels[member.role as Role] ?? member.role}</small>
+                    <small>
+                      {roleLabels[member.role as Role] ?? member.role}
+                    </small>
                   </span>
                 </div>
               ))}
@@ -1485,12 +1760,27 @@ export function WorkspacePage() {
             videoHeight={layout.videoHeight}
             comments={timelineComments}
             presence={presence}
-            onTimeChange={setPlaybackTime}
+            onTimeChange={handleTimeChange}
+            onPlayingChange={setPlaying}
             onSelect={select}
+            onFollowSelect={followSelect}
             onBoundaryChange={boundary}
             onCreate={create}
             onAddComment={addTimelineComment}
             onRemoveComment={removeTimelineComment}
+            onDeleteSegment={removeSegment}
+            onSplitSegment={(segment) =>
+              split(
+                segment,
+                Number(((segment.start + segment.end) / 2).toFixed(2)),
+              )
+            }
+            onSaveSegment={() => {
+              const detail = { handled: false, done: () => {} };
+              window.dispatchEvent(
+                new CustomEvent("purrscription:flush-segment", { detail }),
+              );
+            }}
           />
           {active && visibleSegments?.length && !layout.editorHidden ? (
             <ResizablePanel
@@ -1507,13 +1797,13 @@ export function WorkspacePage() {
               className="editor-panel"
             >
               <SegmentEditor
+                key={active.id}
                 segment={active}
                 segments={visibleSegments}
                 editable={editable}
                 onSaved={updateCache}
-                onSplit={split}
-                onDelete={removeSegment}
                 playbackTime={playbackTime}
+                playing={playing}
               />
             </ResizablePanel>
           ) : layout.editorHidden && active && visibleSegments?.length ? (
@@ -1561,6 +1851,9 @@ export function WorkspacePage() {
           <Inspector
             task={taskData}
             segment={active}
+            segments={visibleSegments || []}
+            duration={contentDuration}
+            listenedRatio={listenedRatio}
             quality={quality.data}
             qualityChecking={quality.isFetching}
             comments={taskComments.data || []}
@@ -1571,9 +1864,11 @@ export function WorkspacePage() {
             }}
             onTaskChanged={() => task.refetch()}
             onSelectComment={select}
+            onJumpToSegment={jumpToSegment}
           />
         </ResizablePanel>
       </div>
+      <HotkeysOverlay />
     </div>
   );
 }

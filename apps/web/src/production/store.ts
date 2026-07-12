@@ -33,6 +33,7 @@ interface State {
   session: AuthSession | null;
   user: User | null;
   activeSegmentId: string | null;
+  segmentDirty: boolean;
   connection: "connecting" | "online" | "offline";
   presence: PresenceMember[];
   locks: SegmentLockState[];
@@ -40,7 +41,9 @@ interface State {
   setSession: (v: AuthSession) => void;
   clearSession: () => void;
   selectSegment: (id: string | null) => void;
+  setSegmentDirty: (v: boolean) => void;
   setConnection: (v: State["connection"]) => void;
+  setPresence: (members: PresenceMember[]) => void;
   upsertPresence: (v: PresenceMember) => void;
   removePresence: (id: string) => void;
   clearPresence: () => void;
@@ -56,6 +59,7 @@ export const useAppStore = create<State>((set) => ({
   session: initial,
   user: initial?.user ?? null,
   activeSegmentId: null,
+  segmentDirty: false,
   connection: "offline",
   presence: [],
   locks: [],
@@ -75,11 +79,25 @@ export const useAppStore = create<State>((set) => ({
     });
   },
   selectSegment: (activeSegmentId) => set({ activeSegmentId }),
+  setSegmentDirty: (segmentDirty) => set({ segmentDirty }),
   setConnection: (connection) => set({ connection }),
-  upsertPresence: (v) =>
-    set((s) => ({
-      presence: [...s.presence.filter((p) => p.userId !== v.userId), v],
+  setPresence: (members) =>
+    set(() => ({
+      presence: [...members].sort((a, b) => a.userId.localeCompare(b.userId)),
     })),
+  upsertPresence: (v) =>
+    set((s) => {
+      // Merge in place and keep a stable (userId) order so avatars never reshuffle
+      // or flicker while other events (focus/join) stream in.
+      const existing = s.presence.find((p) => p.userId === v.userId);
+      const merged = existing ? { ...existing, ...v } : v;
+      return {
+        presence: [
+          ...s.presence.filter((p) => p.userId !== v.userId),
+          merged,
+        ].sort((a, b) => a.userId.localeCompare(b.userId)),
+      };
+    }),
   removePresence: (id) =>
     set((s) => ({ presence: s.presence.filter((p) => p.userId !== id) })),
   clearPresence: () => set({ presence: [] }),

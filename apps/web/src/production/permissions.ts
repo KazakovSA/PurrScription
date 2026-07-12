@@ -22,8 +22,7 @@ export const defaultCapabilities = (role: Role): Capabilities => ({
     role === "ml_engineer" ||
     role === "customer",
   runAsr: role === "admin" || role === "supervisor" || role === "ml_engineer",
-  verifyTasks:
-    role === "admin" || role === "supervisor" || role === "verifier",
+  verifyTasks: role === "admin" || role === "supervisor" || role === "verifier",
   editTerms:
     role === "admin" || role === "supervisor" || role === "ml_engineer",
   viewAnalytics: role !== "customer",
@@ -38,6 +37,8 @@ export const canImportMedia = (role: Role) =>
 export const canEditTask = (role: Role, task: Task, userId: string) => {
   if (role === "admin" || role === "supervisor") return true;
   if (role === "annotator") return task.assignedTo === userId;
+  if (role === "verifier")
+    return task.status === "review" && task.assignedTo !== userId;
   return false;
 };
 

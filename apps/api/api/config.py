@@ -4,7 +4,16 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "package.json").exists() or (parent / "docker-compose.prod.yml").exists():
+            return parent
+    # Docker image layout: /app/api/config.py
+    return here.parents[1]
+
+
+_REPO_ROOT = _find_repo_root()
 _ENV_FILES = (
     _REPO_ROOT / ".env",
     Path(__file__).resolve().parents[1] / ".env",

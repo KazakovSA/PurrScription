@@ -57,6 +57,7 @@ async def websocket_main(websocket: WebSocket) -> None:
                     user_id=user.id,
                     data={"userId": user.id, "userName": user.name, "role": user.role},
                 )
+                await _publish_presence(task_id, user.id)
             elif action == "unsubscribe" and task_id:
                 subscribed_tasks.discard(task_id)
                 event_bus.unsubscribe_local(task_id, websocket)
@@ -67,6 +68,7 @@ async def websocket_main(websocket: WebSocket) -> None:
                     user_id=user.id,
                     data={"userId": user.id},
                 )
+                await _publish_presence(task_id, user.id)
             elif action == "heartbeat" and task_id:
                 await _upsert_presence(user.id, task_id)
     except WebSocketDisconnect:
@@ -81,6 +83,7 @@ async def websocket_main(websocket: WebSocket) -> None:
                 user_id=user.id,
                 data={"userId": user.id},
             )
+            await _publish_presence(task_id, user.id)
 
 
 @router.websocket("/ws/tasks/{task_id}")
@@ -118,6 +121,7 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
             "avatarUrl": user.avatar_url,
         },
     )
+    await _publish_presence(task_id, user.id)
     try:
         while True:
             raw = await websocket.receive_text()
@@ -139,6 +143,7 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
                         "avatarUrl": user.avatar_url,
                     },
                 )
+                await _publish_presence(task_id, user.id)
     except WebSocketDisconnect:
         pass
     finally:
@@ -150,6 +155,16 @@ async def websocket_task_room(websocket: WebSocket, task_id: str) -> None:
             user_id=user.id,
             data={"userId": user.id},
         )
+        await _publish_presence(task_id, user.id)
+
+
+async def _publish_presence(task_id: str, user_id: str) -> None:
+    await event_bus.publish(
+        event_type="presence_updated",
+        task_id=task_id,
+        user_id=user_id,
+        data={"presence": await _presence_snapshot(task_id)},
+    )
 
 
 async def _upsert_presence(user_id: str, task_id: str, segment_id: str | None = None) -> None:

@@ -15,6 +15,7 @@ export function useTaskSocket(taskId: string | undefined) {
   const qc = useQueryClient();
   const token = useAppStore((s) => s.session?.accessToken);
   const setConnection = useAppStore((s) => s.setConnection);
+  const setPresence = useAppStore((s) => s.setPresence);
   const upsert = useAppStore((s) => s.upsertPresence);
   const remove = useAppStore((s) => s.removePresence);
   const clear = useAppStore((s) => s.clearPresence);
@@ -89,17 +90,16 @@ export function useTaskSocket(taskId: string | undefined) {
         }
         const d = m.data;
         if (m.type === "presence_updated" && Array.isArray(d.presence)) {
-          clear();
-          for (const item of d.presence as Array<Record<string, unknown>>) {
-            upsert({
+          setPresence(
+            (d.presence as Array<Record<string, unknown>>).map((item) => ({
               userId: String(item.userId),
               userName: String(item.userName),
               role: String(item.role),
               color: stableUserColor(String(item.userId)),
               avatarUrl: item.avatarUrl ? String(item.avatarUrl) : null,
               focusedSegmentId: item.segmentId ? String(item.segmentId) : null,
-            });
-          }
+            })),
+          );
         }
         if (m.type === "user_joined") {
           upsert({
@@ -144,9 +144,12 @@ export function useTaskSocket(taskId: string | undefined) {
             old?.filter((segment) => segment.id !== String(d.segmentId)),
           );
         }
-        if (m.type === "task_status_changed" && d.status) {
+        const nextStatus = d.status || d.to;
+        if (m.type === "task_status_changed" && nextStatus) {
           qc.setQueryData<Task>(["task", taskId], (old) =>
-            old ? { ...old, status: String(d.status) as Task["status"] } : old,
+            old
+              ? { ...old, status: String(nextStatus) as Task["status"] }
+              : old,
           );
         }
         if (
@@ -202,6 +205,7 @@ export function useTaskSocket(taskId: string | undefined) {
     token,
     qc,
     setConnection,
+    setPresence,
     upsert,
     remove,
     clear,

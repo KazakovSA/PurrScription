@@ -9,9 +9,7 @@ export const COMMENT_COLORS = [
 export type CommentColorId = (typeof COMMENT_COLORS)[number]["id"];
 export const DEFAULT_COMMENT_COLOR: CommentColorId = "blue";
 export function commentColorHex(id: string | null | undefined): string {
-  return (
-    COMMENT_COLORS.find((item) => item.id === id)?.color ?? "#3b82f6"
-  );
+  return COMMENT_COLORS.find((item) => item.id === id)?.color ?? "#3b82f6";
 }
 export interface TimelineComment {
   id: string;

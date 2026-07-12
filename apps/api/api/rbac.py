@@ -48,6 +48,8 @@ def can_edit_segment(
         return True
     if user.role == UserRole.SUPERVISOR.value:
         return True
+    if user.role == UserRole.VERIFIER.value:
+        return task.status == "review" and task.assigned_to != user.id
     if user.role == UserRole.ANNOTATOR.value:
         user_assignments = [item for item in assignments if item.user_id == user.id]
         if user_assignments:
@@ -64,6 +66,8 @@ def can_edit_task(user: User, task: Task) -> bool:
         return True
     if user.role == UserRole.SUPERVISOR.value:
         return True
+    if user.role == UserRole.VERIFIER.value:
+        return task.status == "review" and task.assigned_to != user.id
     if user.role == UserRole.ANNOTATOR.value:
         return task.assigned_to == user.id
     return False
